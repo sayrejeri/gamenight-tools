@@ -1,0 +1,52 @@
+import type { RowDataPacket } from "mysql2";
+import { isPlatformOwner } from "@/lib/auth";
+import { query } from "@/lib/db";
+import type { WorkspaceRole } from "@/lib/types";
+
+const roleRank: Record<WorkspaceRole, number> = {
+  VIEWER: 10,
+  REFEREE: 20,
+  HOST: 30,
+  STAFF: 40,
+  ADMIN: 50,
+  OWNER: 60,
+};
+
+type MembershipRow = RowDataPacket & {
+  discord_id: string;
+  role: WorkspaceRole | null;
+  status: "ACTIVE" | "SUSPENDED" | "REMOVED" | null;
+};
+
+export async function getWorkspaceRole(userId: string, workspaceId: string): Promise<WorkspaceRole | null> {
+  const rows = await query<MembershipRow[]>(
+    `SELECT u.discord_id, wm.role, wm.status
+     FROM users u
+     LEFT JOIN workspace_members wm
+       ON wm.user_id = u.id AND wm.workspace_id = ?
+     WHERE u.id = ? LIMIT 1`,
+    [workspaceId, userId],
+  );
+
+  const row = rows[0];
+  if (!row) return null;
+  if (isPlatformOwner(row.discord_id)) return "OWNER";
+  return row.status === "ACTIVE" ? row.role : null;
+}
+
+export async function hasWorkspaceRole(
+  userId: string,
+  workspaceId: string,
+  minimumRole: WorkspaceRole,
+): Promise<boolean> {
+  const role = await getWorkspaceRole(userId, workspaceId);
+  return role ? roleRank[role] >= roleRank[minimumRole] : false;
+}
+
+export function canHost(role: WorkspaceRole | null): boolean {
+  return role === "OWNER" || role === "ADMIN" || role === "STAFF" || role === "HOST";
+}
+
+export function canManageCodes(role: WorkspaceRole | null): boolean {
+  return role === "OWNER" || role === "ADMIN" || role === "STAFF";
+}
