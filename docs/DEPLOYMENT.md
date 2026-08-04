@@ -1,6 +1,6 @@
 # Four Seasons Hosting deployment outline
 
-The application is designed for a Node.js application on the `gamenights.sayrejeri.com` subdomain and a dedicated MariaDB/MySQL database.
+The application is designed for a CloudLinux Node.js application on the `gamenights.sayrejeri.com` subdomain and a dedicated MariaDB/MySQL database.
 
 ## Hosting prerequisites
 
@@ -9,6 +9,18 @@ The application is designed for a Node.js application on the `gamenights.sayreje
 - HTTPS enabled for `gamenights.sayrejeri.com`
 - Ability to set environment variables in the Node.js app manager
 - A Discord Developer Portal application
+
+## Create the Node.js application
+
+Use these values in **Setup Node.js App**:
+
+- Node.js version: newest available 22.x, otherwise newest 20.x
+- Application mode: `Production`
+- Application root: `domains/gamenights.sayrejeri.com/app`
+- Application URL: `gamenights.sayrejeri.com` with the path left blank
+- Application startup file: `server.js`
+
+The application root is relative to the hosting account home directory. Keeping the source in the private `app` directory prevents configuration and source files from being served as ordinary public files.
 
 ## Database
 
@@ -33,13 +45,13 @@ https://gamenights.sayrejeri.com/api/auth/discord/callback
 
 The website requests `identify`, `guilds`, and `connections`. A bot is not required.
 
-## Node application
+## Upload and build
 
-1. Pull or upload the GitHub repository into the application root.
-2. Run `npm install`.
-3. Run `npm run build`.
-4. Set the startup command to `npm run start` or start the generated standalone server.
-5. Add every value from `.env.example` through the host's environment-variable controls.
+1. Place the GitHub repository contents in `domains/gamenights.sayrejeri.com/app`.
+2. Use the hosting panel's **Run npm install** action, or run `npm install` inside the application environment.
+3. Run the package script `build` with `npm run build`.
+4. Confirm the startup file remains `server.js`.
+5. Add every value from `.env.example` through the environment-variable controls.
 6. Restart the application.
 
-The exact application root and startup-file fields depend on the Node.js app screen provided by the host. Confirm those fields before the first production deployment.
+`server.js` uses the host-provided `PORT` value and listens on `0.0.0.0`, allowing CloudLinux Passenger to route the subdomain to Next.js.
