@@ -30,12 +30,11 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           rm -rf deploy
-          mkdir -p deploy/database
+          mkdir -p deploy
           cp server.js deploy/server.js
           cp package.json deploy/package.json
           cp VERSION deploy/VERSION
-          cp DEPLOYMENT-v0.2.md deploy/DEPLOYMENT-v0.2.md
-          cp database/002_expanded_events.sql deploy/database/002_expanded_events.sql
+          cp DEPLOYMENT-v0.2.1.md deploy/DEPLOYMENT-v0.2.1.md
           cp -a .next deploy/.next
           rm -rf deploy/.next/cache deploy/.next/types deploy/.next/diagnostics
           if [ -d public ]; then cp -a public deploy/public; fi
@@ -44,7 +43,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: gamenight-tools-v0.2.0-directadmin
+          name: gamenight-tools-v0.2.1-directadmin
           path: deploy/
           include-hidden-files: true
           retention-days: 14
