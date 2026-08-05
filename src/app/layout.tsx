@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./expanded.css";
+import "./management.css";
 
 export const metadata: Metadata = {
   title: "Game Night Tools",
