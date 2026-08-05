@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Action = "PUBLISH" | "SUBMIT_APPROVAL" | "APPROVE" | "CLOSE_SIGNUPS" | "OPEN_CHECKIN" | "START" | "COMPLETE" | "POSTPONE" | "CANCEL" | "REOPEN_DRAFT";
@@ -41,41 +41,41 @@ const buttonsByStatus: Record<string, Array<{ action: Action; label: string; dan
   CANCELLED: [{ action: "REOPEN_DRAFT", label: "Reopen as draft" }],
 };
 
-export function EventStatusControls({
-  eventId,
-  status,
-  canApprove,
-}: {
-  eventId: string;
-  status: string;
-  canApprove: boolean;
-}) {
+export function EventStatusControls({ eventId, status, canApprove }: { eventId: string; status: string; canApprove: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<Action | null>(null);
   const [message, setMessage] = useState("");
   const buttons = (buttonsByStatus[status] ?? []).filter((button) => button.action !== "APPROVE" || canApprove);
 
+  useEffect(() => {
+    let active = true;
+    async function syncDeadline() {
+      try {
+        const response = await fetch(`/api/events/${eventId}/sync`, { method: "POST" });
+        const body = await response.json() as { changed?: boolean };
+        if (active && response.ok && body.changed) router.refresh();
+      } catch {
+        // A later poll or page refresh can retry without interrupting the host.
+      }
+    }
+    void syncDeadline();
+    const timer = window.setInterval(syncDeadline, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [eventId, router]);
+
   async function run(action: Action) {
     if (["CANCEL", "POSTPONE", "COMPLETE"].includes(action) && !window.confirm("Are you sure you want to continue?")) return;
     setBusy(action);
     setMessage("");
-
     try {
       const response = await fetch(`/api/events/${eventId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      const body = await response.json() as {
-        error?: string;
-        status?: string;
-        bracketResult?: { generated?: boolean; participantCount?: number };
-      };
+      const body = await response.json() as { error?: string; status?: string; bracketResult?: { generated?: boolean; participantCount?: number } };
       if (!response.ok) throw new Error(body.error ?? "Event status could not be changed.");
-
-      const bracketMessage = body.bracketResult?.generated
-        ? ` A bracket was generated with ${body.bracketResult.participantCount} participants.`
-        : "";
+      const bracketMessage = body.bracketResult?.generated ? ` A bracket was generated with ${body.bracketResult.participantCount} participants.` : "";
       setMessage(`Event updated to ${body.status?.replaceAll("_", " ").toLowerCase()}.${bracketMessage}`);
       router.refresh();
     } catch (error) {
