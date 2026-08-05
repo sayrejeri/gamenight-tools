@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   buildFirstRound,
   deriveSingleElimination,
+  getMatchSlotLabel,
   isDraft,
   makeParticipant,
   shuffle,
@@ -16,6 +17,16 @@ import {
 } from "@/components/bracket/bracket-model";
 import { downloadBracketPng } from "@/components/bracket/bracket-export";
 import { ThreeMatch } from "@/components/bracket/three-match";
+
+function duplicateParticipantName(participants: Participant[]): string | null {
+  const seen = new Set<string>();
+  for (const participant of participants) {
+    const normalized = participant.name.trim().toLocaleLowerCase();
+    if (seen.has(normalized)) return participant.name.trim();
+    seen.add(normalized);
+  }
+  return null;
+}
 
 export function BracketGenerator({
   eventId,
@@ -106,6 +117,15 @@ export function BracketGenerator({
       ...participant,
       name: participant.name.trim() || `Player ${index + 1}`,
     }));
+    const duplicateName = duplicateParticipantName(cleaned);
+    if (duplicateName) {
+      setFirstRound([]);
+      setWinners({});
+      setThreeWinners({});
+      setMessage(`“${duplicateName}” appears more than once. Give every participant a unique name before generating the bracket.`);
+      return;
+    }
+
     const placed = seedingMode === "random" ? shuffle(cleaned) : cleaned;
     setParticipants(placed);
     setWinners({});
@@ -126,7 +146,7 @@ export function BracketGenerator({
   }
 
   function chooseWinner(match: DerivedMatch, participant: Participant) {
-    if (!match.a || !match.b) return;
+    if (!match.a || !match.b || !match.aReady || !match.bReady) return;
     setWinners((current) => ({ ...current, [match.id]: participant.id }));
   }
 
@@ -293,7 +313,7 @@ export function BracketGenerator({
           <div className="section-header">
             <div>
               <h2>Single-elimination bracket</h2>
-              <p>Select each match winner to advance them automatically. Byes advance without a selection.</p>
+              <p>Select each match winner to advance them automatically. First-round byes advance automatically; unfinished later-round slots remain TBD.</p>
             </div>
             {champion ? <span className="badge">Champion: {champion.name}</span> : null}
           </div>
@@ -306,8 +326,9 @@ export function BracketGenerator({
                     {round.map((match) => (
                       <article className="match-card" key={match.id}>
                         {[match.a, match.b].map((participant, slot) => {
+                          const slotName = slot === 0 ? "a" : "b";
                           const isWinner = participant && match.winner?.id === participant.id;
-                          const isSelectable = Boolean(match.a && match.b);
+                          const isSelectable = Boolean(match.a && match.b && match.aReady && match.bReady);
                           return (
                             <button
                               className={`match-participant${isWinner ? " winner" : ""}${!participant ? " bye" : ""}`}
@@ -316,7 +337,7 @@ export function BracketGenerator({
                               disabled={!participant || !isSelectable}
                               onClick={() => participant && chooseWinner(match, participant)}
                             >
-                              <span>{participant?.name ?? "BYE"}</span>
+                              <span>{participant?.name ?? getMatchSlotLabel(match, slotName)}</span>
                               {isWinner ? <strong>Winner</strong> : null}
                             </button>
                           );
