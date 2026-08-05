@@ -31,10 +31,9 @@ jobs:
         run: |
           rm -rf deploy
           mkdir -p deploy
-          cp .next/standalone/server.js deploy/server.js
+          cp server.js deploy/server.js
           cp package.json deploy/package.json
-          cp -a .next/standalone/.next deploy/.next
-          cp -a .next/static deploy/.next/static
+          cp -a .next deploy/.next
           cp -a public deploy/public
 
       - name: Upload DirectAdmin deployment bundle
