@@ -9,7 +9,7 @@ import { PlatformStaffForm } from "@/components/platform-staff-form";
 import { ReportReviewControls } from "@/components/report-review-controls";
 
 type RequestRow = RowDataPacket & { id: string; request_type: string; requested_name: string; description: string | null; main_platform: string | null; main_game: string | null; applicant_name: string; discord_guild_id: string | null; created_at: Date };
-type ReportRow = RowDataPacket & { id: string; target_type: string; target_id: string; reason: string; details: string | null; status: string; reporter_name: string; created_at: Date };
+type ReportRow = RowDataPacket & { id: string; target_type: string; target_id: string; reason: string; details: string | null; status: string; reporter_name: string; target_username: string | null; target_display_name: string | null; created_at: Date };
 type StaffRow = RowDataPacket & { user_id: string; role: string; name: string };
 type AuditRow = RowDataPacket & { id: string; action_name: string; actor_name: string; target_type: string | null; target_id: string | null; created_at: Date };
 type CountRow = RowDataPacket & { total: number };
@@ -30,8 +30,12 @@ export default async function StaffDashboardPage() {
     ) : Promise.resolve([] as RequestRow[]),
     canModeratePlatform(role) ? query<ReportRow[]>(
       `SELECT r.id, r.target_type, r.target_id, r.reason, r.details, r.status, r.created_at,
-              COALESCE(u.site_username, u.global_name, u.username) AS reporter_name
-       FROM reports r INNER JOIN users u ON u.id = r.reporter_user_id
+              COALESCE(reporter.site_username, reporter.global_name, reporter.username) AS reporter_name,
+              target.site_username AS target_username,
+              COALESCE(target.global_name, target.username) AS target_display_name
+       FROM reports r
+       INNER JOIN users reporter ON reporter.id = r.reporter_user_id
+       LEFT JOIN users target ON r.target_type = 'USER' AND CAST(target.id AS CHAR) = r.target_id
        WHERE r.status IN ('OPEN', 'UNDER_REVIEW') ORDER BY r.created_at ASC LIMIT 100`,
     ) : Promise.resolve([] as ReportRow[]),
     canManagePlatformStaff(role) ? query<StaffRow[]>(
@@ -45,6 +49,7 @@ export default async function StaffDashboardPage() {
        FROM audit_logs al INNER JOIN users u ON u.id = al.actor_user_id
        WHERE al.action_name LIKE 'profile_request.%' OR al.action_name LIKE 'platform_staff.%'
           OR al.action_name LIKE 'report.%' OR al.action_name LIKE 'workspace.%'
+          OR al.action_name LIKE 'platform_user.%'
        ORDER BY al.created_at DESC LIMIT 30`,
     ),
     query<CountRow[]>(`SELECT COUNT(*) AS total FROM users`),
@@ -66,11 +71,11 @@ export default async function StaffDashboardPage() {
 
       {canReviewProfiles(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Profile approval queue</h2><p>Approve legitimate communities and teams, request changes, or deny impersonation and incomplete requests.</p></div></div>{requests.length ? <div className="review-grid">{requests.map((item) => <article className="review-card" key={item.id}><span className="card-kicker">{item.request_type} · {item.applicant_name}</span><h3>{item.requested_name}</h3><p>{item.description ?? "No description provided."}</p><div className="button-row">{item.main_platform ? <span className="badge">{item.main_platform}</span> : null}{item.main_game ? <span className="badge">{item.main_game}</span> : null}{item.discord_guild_id ? <span className="badge">Discord verified</span> : null}</div><StaffReviewControls requestId={item.id} /></article>)}</div> : <div className="empty-state">No profiles are waiting for review.</div>}</section> : null}
 
-      {canModeratePlatform(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Reports</h2><p>Profile reports and other platform reports show only to authorized moderators and administrators.</p></div></div>{reports.length ? <div className="review-grid">{reports.map((report) => <article className="review-card" key={report.id}><span className="card-kicker">{report.target_type} · {report.reason}</span><h3>Target {report.target_id}</h3><p>{report.details ?? "No additional details."}</p><small className="muted">Reported by {report.reporter_name} on {new Date(report.created_at).toLocaleString()}</small><ReportReviewControls reportId={report.id} currentStatus={report.status} /></article>)}</div> : <div className="empty-state">No open platform reports.</div>}</section> : null}
+      {canModeratePlatform(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Reports</h2><p>Profile reports and other platform reports show only to authorized moderators and administrators.</p></div></div>{reports.length ? <div className="review-grid">{reports.map((report) => <article className="review-card" key={report.id}><span className="card-kicker">{report.target_type} · {report.reason}</span><h3>{report.target_display_name ?? `Target ${report.target_id}`}</h3><p>{report.details ?? "No additional details."}</p><small className="muted">Reported by {report.reporter_name} on {new Date(report.created_at).toLocaleString()}</small><div className="button-row">{report.target_username ? <Link className="button button-secondary" href={`/users/${report.target_username}`}>Open reported profile</Link> : null}<Link className="button button-secondary" href={`/dashboard/staff/users?q=${encodeURIComponent(report.target_id)}`}>Find target in users</Link></div><ReportReviewControls reportId={report.id} currentStatus={report.status} /></article>)}</div> : <div className="empty-state">No open platform reports.</div>}</section> : null}
 
       {canManagePlatformStaff(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Platform staff</h2><p>Assign scoped access without sharing accounts. Platform owners and admins can also modify approved server profiles.</p></div></div><PlatformStaffForm staff={staff.map((member) => ({ userId: member.user_id, name: member.name, role: member.role }))} /></section> : null}
 
-      <section className="panel section-stack"><div className="section-header"><div><h2>Moderation audit trail</h2><p>Recent platform profile, staff, report, and server-management actions.</p></div></div>{audit.length ? <div className="audit-list">{audit.map((item) => <div className="audit-row" key={item.id}><div><strong>{item.action_name.replaceAll(".", " · ").replaceAll("_", " ")}</strong><span>{item.actor_name}{item.target_type ? ` · ${item.target_type} ${item.target_id ?? ""}` : ""}</span></div><time>{new Date(item.created_at).toLocaleString()}</time></div>)}</div> : <div className="empty-state">No platform staff actions have been recorded yet.</div>}</section>
+      <section className="panel section-stack"><div className="section-header"><div><h2>Moderation audit trail</h2><p>Recent platform profile, staff, report, server-management, and user-moderation actions.</p></div></div>{audit.length ? <div className="audit-list">{audit.map((item) => <div className="audit-row" key={item.id}><div><strong>{item.action_name.replaceAll(".", " · ").replaceAll("_", " ")}</strong><span>{item.actor_name}{item.target_type ? ` · ${item.target_type} ${item.target_id ?? ""}` : ""}</span></div><time>{new Date(item.created_at).toLocaleString()}</time></div>)}</div> : <div className="empty-state">No platform staff actions have been recorded yet.</div>}</section>
     </div>
   );
 }
