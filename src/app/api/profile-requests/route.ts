@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
        UNION ALL
        SELECT id FROM profile_requests
        WHERE request_type = 'SERVER' AND discord_guild_id = ?
-         AND status IN ('PENDING', 'CHANGES_REQUESTED', 'APPROVED')
+         AND status IN ('PENDING', 'APPROVED')
        LIMIT 1`,
       [data.discordGuildId, data.discordGuildId],
     );
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
        UNION ALL
        SELECT id FROM profile_requests
        WHERE request_type = 'TEAM' AND requested_slug = ?
-         AND status IN ('PENDING', 'CHANGES_REQUESTED', 'APPROVED')
+         AND status IN ('PENDING', 'APPROVED')
        LIMIT 1`,
       [requestedSlug, requestedSlug],
     );
@@ -94,6 +94,22 @@ export async function POST(request: NextRequest) {
 
   const id = randomUUID();
   await withTransaction(async (connection) => {
+    if (data.requestType === "SERVER") {
+      await connection.execute(
+        `UPDATE profile_requests SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP(3)
+         WHERE applicant_user_id = ? AND request_type = 'SERVER' AND discord_guild_id = ?
+           AND status = 'CHANGES_REQUESTED'`,
+        [session.userId, data.discordGuildId],
+      );
+    } else {
+      await connection.execute(
+        `UPDATE profile_requests SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP(3)
+         WHERE applicant_user_id = ? AND request_type = 'TEAM' AND requested_slug = ?
+           AND status = 'CHANGES_REQUESTED'`,
+        [session.userId, requestedSlug],
+      );
+    }
+
     await connection.execute(
       `INSERT INTO profile_requests
         (id, request_type, applicant_user_id, requested_name, requested_slug, discord_guild_id,
