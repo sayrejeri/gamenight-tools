@@ -3,6 +3,7 @@ import "./globals.css";
 import "./expanded.css";
 import "./management.css";
 import "./community.css";
+import "./safety.css";
 
 export const metadata: Metadata = {
   title: {
