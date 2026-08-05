@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { getPlatformRole } from "@/lib/platform-access";
+import { canModeratePlatform, getPlatformRole } from "@/lib/platform-access";
+import { PlatformUserModeration } from "@/components/platform-user-moderation";
 
 type UserRow = RowDataPacket & {
   id: string;
@@ -28,10 +29,11 @@ export default async function StaffUsersPage({ searchParams }: { searchParams: P
   const session = await requireSession();
   const platformRole = await getPlatformRole(session.userId);
   if (!platformRole) notFound();
+  const canModerate = canModeratePlatform(platformRole);
 
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
-  const status = ["ACTIVE", "SUSPENDED", "BANNED", "DELETED"].includes(params.status ?? "") ? params.status! : "";
+  const status = ["ACTIVE", "SUSPENDED", "BANNED"].includes(params.status ?? "") ? params.status! : "";
   const like = `%${q}%`;
 
   const [users, totals] = await Promise.all([
@@ -67,7 +69,6 @@ export default async function StaffUsersPage({ searchParams }: { searchParams: P
           <option value="ACTIVE">Active</option>
           <option value="SUSPENDED">Suspended</option>
           <option value="BANNED">Banned</option>
-          <option value="DELETED">Deleted</option>
         </select>
         <button className="button">Search</button>
       </form>
@@ -93,7 +94,10 @@ export default async function StaffUsersPage({ searchParams }: { searchParams: P
                     <small>{user.onboarding_completed ? "Profile setup complete" : "Onboarding incomplete"}</small>
                   </div>
                   <div className="staff-user-actions">
-                    {user.site_username ? <Link className="button button-secondary" href={`/users/${user.site_username}`}>Open profile</Link> : null}
+                    <div className="button-row">
+                      {user.site_username ? <Link className="button button-secondary" href={`/users/${user.site_username}`}>Open profile</Link> : null}
+                      {canModerate ? <PlatformUserModeration userId={user.id} currentStatus={user.account_status} compact /> : null}
+                    </div>
                     <span>Last login<br /><strong>{new Date(user.last_login_at).toLocaleString()}</strong></span>
                   </div>
                 </article>
