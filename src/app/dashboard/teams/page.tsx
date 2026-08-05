@@ -28,15 +28,8 @@ export default async function TeamsPage() {
               NULL AS member_role,
               (SELECT COUNT(*) FROM team_members count_tm WHERE count_tm.team_id = t.id AND count_tm.status = 'ACTIVE') AS member_count
        FROM teams t WHERE t.profile_status = 'APPROVED'
-       ORDER BY t.is_featured DESC, FIELD(t.recruiting_status, 'OPEN', 'INVITE_ONLY', 'CLOSED'), t.name`,
-    ).catch(async () => query<TeamRow[]>(
-      `SELECT t.id, t.slug, t.name, t.tag, t.description, t.logo_url, t.banner_url,
-              t.main_platform, t.main_game, t.region, t.recruiting_status, t.verification_level,
-              NULL AS member_role,
-              (SELECT COUNT(*) FROM team_members count_tm WHERE count_tm.team_id = t.id AND count_tm.status = 'ACTIVE') AS member_count
-       FROM teams t WHERE t.profile_status = 'APPROVED'
        ORDER BY FIELD(t.recruiting_status, 'OPEN', 'INVITE_ONLY', 'CLOSED'), t.name`,
-    )),
+    ),
   ]);
 
   return <div className="section-stack"><section className="page-heading"><div><span className="eyebrow">Competitive communities</span><h1>Teams</h1><p>Find approved teams, view rosters, apply to open teams, and manage the organizations you own.</p></div><Link className="button" href="/dashboard/profile-requests">Request a team profile</Link></section>{myTeams.length ? <section className="panel section-stack"><div className="section-header"><div><h2>Your teams</h2><p>Accepted memberships and pending invitations.</p></div></div><div className="organization-grid">{myTeams.map((team) => <TeamCard team={team} key={team.id} />)}</div></section> : null}<section className="panel section-stack"><div className="section-header"><div><h2>Discover teams</h2><p>Approved teams across Game Night Tools.</p></div></div>{teams.length ? <div className="organization-grid">{teams.map((team) => <TeamCard team={team} key={team.id} />)}</div> : <div className="empty-state">No approved teams are public yet.</div>}</section></div>;
