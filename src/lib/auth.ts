@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { jwtVerify, SignJWT } from "jose";
+import type { RowDataPacket } from "mysql2";
+import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/types";
 
 const SESSION_COOKIE = "gamenight_session";
@@ -38,6 +40,12 @@ export async function readSession(): Promise<SessionUser | null> {
     if (!payload.sub || typeof payload.discordId !== "string" || typeof payload.username !== "string") {
       return null;
     }
+
+    const users = await query<(RowDataPacket & { account_status: string })[]>(
+      `SELECT account_status FROM users WHERE id = ? LIMIT 1`,
+      [payload.sub],
+    );
+    if (users[0]?.account_status !== "ACTIVE") return null;
 
     return {
       userId: payload.sub,
