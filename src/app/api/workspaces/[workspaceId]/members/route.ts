@@ -26,6 +26,7 @@ type UserRow = RowDataPacket & {
 type MemberRow = RowDataPacket & {
   role: string;
   status: string;
+  discord_id: string;
 };
 
 function canManageWorkspace(role: string | null): boolean {
@@ -34,13 +35,12 @@ function canManageWorkspace(role: string | null): boolean {
 
 function canAssign(actorRole: string, role: string): boolean {
   if (role === "OWNER") return actorRole === "OWNER";
-  if (role === "ADMIN") return actorRole === "OWNER" || actorRole === "ADMIN";
   return actorRole === "OWNER" || actorRole === "ADMIN";
 }
 
 async function resolveUser(identifier: string): Promise<UserRow | null> {
   const rows = await query<UserRow[]>(
-    `SELECT id, discord_id, COALESCE(site_username, global_name, username) AS display_name
+    `SELECT CAST(id AS CHAR) AS id, discord_id, COALESCE(site_username, global_name, username) AS display_name
      FROM users
      WHERE LOWER(site_username) = LOWER(?)
         OR LOWER(username) = LOWER(?)
@@ -87,6 +87,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ wo
            ON DUPLICATE KEY UPDATE created_by = VALUES(created_by)`,
           [workspaceId, user.discord_id, session.userId],
         );
+      } else {
+        await connection.execute(
+          `DELETE FROM workspace_owner_claims WHERE workspace_id = ? AND discord_id = ?`,
+          [workspaceId, user.discord_id],
+        );
       }
       await connection.execute(
         `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
@@ -127,7 +132,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ w
   if (!canAssign(actorRole!, parsed.data.role)) return NextResponse.json({ error: "Only a server or platform owner can assign another owner." }, { status: 403 });
 
   const targets = await query<MemberRow[]>(
-    `SELECT role, status FROM workspace_members WHERE workspace_id = ? AND user_id = ? LIMIT 1`,
+    `SELECT wm.role, wm.status, u.discord_id
+     FROM workspace_members wm INNER JOIN users u ON u.id = wm.user_id
+     WHERE wm.workspace_id = ? AND wm.user_id = ? LIMIT 1`,
     [workspaceId, parsed.data.userId],
   );
   const target = targets[0];
@@ -140,8 +147,21 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ w
        WHERE workspace_id = ? AND user_id = ?`,
       [parsed.data.role, session.userId, workspaceId, parsed.data.userId],
     );
+    if (parsed.data.role === "OWNER") {
+      await connection.execute(
+        `INSERT INTO workspace_owner_claims (workspace_id, discord_id, created_by)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE created_by = VALUES(created_by)`,
+        [workspaceId, target.discord_id, session.userId],
+      );
+    } else {
+      await connection.execute(
+        `DELETE FROM workspace_owner_claims WHERE workspace_id = ? AND discord_id = ?`,
+        [workspaceId, target.discord_id],
+      );
+    }
   });
-  await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.role_updated", targetType: "user", targetId: parsed.data.userId, details: { role: parsed.data.role } });
+  await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.role_updated", targetType: "user", targetId: parsed.data.userId, details: { previousRole: target.role, role: parsed.data.role } });
   return NextResponse.json({ success: true });
 }
 
@@ -160,7 +180,9 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
   if (userId) {
     const targets = await query<MemberRow[]>(
-      `SELECT role, status FROM workspace_members WHERE workspace_id = ? AND user_id = ? LIMIT 1`,
+      `SELECT wm.role, wm.status, u.discord_id
+       FROM workspace_members wm INNER JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = ? AND wm.user_id = ? LIMIT 1`,
       [workspaceId, userId],
     );
     const target = targets[0];
@@ -172,8 +194,12 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
          WHERE workspace_id = ? AND user_id = ?`,
         [session.userId, workspaceId, userId],
       );
+      await connection.execute(
+        `DELETE FROM workspace_owner_claims WHERE workspace_id = ? AND discord_id = ?`,
+        [workspaceId, target.discord_id],
+      );
     });
-    await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.removed", targetType: "user", targetId: userId });
+    await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.removed", targetType: "user", targetId: userId, details: { previousRole: target.role } });
   } else if (discordId) {
     if (actorRole !== "OWNER") return NextResponse.json({ error: "Only an owner can remove pending owner claims." }, { status: 403 });
     await withTransaction(async (connection) => {
