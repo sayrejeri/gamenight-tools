@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { isPlatformOwner } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getPlatformRole } from "@/lib/platform-access";
 import type { WorkspaceRole } from "@/lib/types";
 
 const roleRank: Record<WorkspaceRole, number> = {
@@ -31,7 +32,12 @@ export async function getWorkspaceRole(userId: string, workspaceId: string): Pro
   const row = rows[0];
   if (!row) return null;
   if (isPlatformOwner(row.discord_id)) return "OWNER";
-  return row.status === "ACTIVE" ? row.role : null;
+  if (row.status === "ACTIVE" && row.role) return row.role;
+
+  const platformRole = await getPlatformRole(userId);
+  if (platformRole === "OWNER") return "OWNER";
+  if (platformRole === "ADMIN") return "ADMIN";
+  return null;
 }
 
 export async function hasWorkspaceRole(
