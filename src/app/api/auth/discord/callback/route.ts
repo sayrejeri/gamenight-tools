@@ -5,15 +5,63 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { createSessionToken, sessionCookieOptions } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 import { exchangeDiscordCode, fetchDiscordProfile } from "@/lib/discord";
+import { buildConnectionProfileUrl } from "@/lib/connections";
+import { resolveRobloxUser } from "@/lib/roblox";
 
 export const dynamic = "force-dynamic";
 
 type UserIdRow = RowDataPacket & { id: string };
 type LoginStage = "discord_token" | "discord_profile" | "database" | "session";
 
+type EnrichedConnection = {
+  type: string;
+  originalExternalId: string;
+  externalId: string;
+  handle: string;
+  displayName: string;
+  verified: boolean;
+  profileUrl: string | null;
+  avatarUrl: string | null;
+};
+
 function appUrl(path: string, request: NextRequest): URL {
   const baseUrl = process.env.APP_URL ?? request.nextUrl.origin;
   return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+}
+
+async function enrichDiscordConnection(connectionItem: {
+  type: string;
+  id: string;
+  name: string;
+  verified?: boolean;
+}): Promise<EnrichedConnection> {
+  const type = connectionItem.type.toLowerCase();
+  if (type === "roblox") {
+    const identity = await resolveRobloxUser(connectionItem.name);
+    if (identity) {
+      return {
+        type,
+        originalExternalId: connectionItem.id,
+        externalId: identity.id,
+        handle: identity.username,
+        displayName: identity.displayName,
+        verified: Boolean(connectionItem.verified),
+        profileUrl: identity.profileUrl,
+        avatarUrl: identity.avatarUrl,
+      };
+    }
+  }
+
+  return {
+    type,
+    originalExternalId: connectionItem.id,
+    externalId: connectionItem.id,
+    handle: connectionItem.name,
+    displayName: connectionItem.name,
+    verified: Boolean(connectionItem.verified),
+    profileUrl: buildConnectionProfileUrl(type, connectionItem.id, connectionItem.name),
+    avatarUrl: null,
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -34,6 +82,7 @@ export async function GET(request: NextRequest) {
 
     stage = "discord_profile";
     const { user, guilds, connections } = await fetchDiscordProfile(accessToken);
+    const enrichedConnections = await Promise.all(connections.map(enrichDiscordConnection));
 
     stage = "database";
     const userId = await withTransaction(async (connection) => {
@@ -72,33 +121,52 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      for (const connectionItem of connections) {
+      for (const connectionItem of enrichedConnections) {
         const [existing] = await connection.query<RowDataPacket[]>(
           `SELECT id FROM user_connections
-           WHERE user_id = ? AND source = 'DISCORD' AND connection_type = ? AND external_id = ?
+           WHERE user_id = ? AND source = 'DISCORD' AND connection_type = ?
+             AND (external_id IN (?, ?) OR LOWER(handle) = LOWER(?))
            LIMIT 1`,
-          [currentUserId, connectionItem.type, connectionItem.id],
+          [
+            currentUserId,
+            connectionItem.type,
+            connectionItem.externalId,
+            connectionItem.originalExternalId,
+            connectionItem.handle,
+          ],
         );
 
         if (existing[0]) {
           await connection.execute(
             `UPDATE user_connections
-             SET handle = ?, is_verified = ?, updated_at = CURRENT_TIMESTAMP(3)
+             SET external_id = ?, handle = ?, display_name = ?, profile_url = ?, avatar_url = ?,
+                 is_verified = ?, updated_at = CURRENT_TIMESTAMP(3)
              WHERE id = ?`,
-            [connectionItem.name, connectionItem.verified ? 1 : 0, existing[0].id],
+            [
+              connectionItem.externalId,
+              connectionItem.handle,
+              connectionItem.displayName,
+              connectionItem.profileUrl,
+              connectionItem.avatarUrl,
+              connectionItem.verified ? 1 : 0,
+              existing[0].id,
+            ],
           );
         } else {
           await connection.execute(
             `INSERT INTO user_connections
-              (id, user_id, source, connection_type, external_id, handle, display_name, is_verified, is_visible)
-             VALUES (?, ?, 'DISCORD', ?, ?, ?, ?, ?, 1)`,
+              (id, user_id, source, connection_type, external_id, handle, display_name,
+               profile_url, avatar_url, is_verified, is_visible)
+             VALUES (?, ?, 'DISCORD', ?, ?, ?, ?, ?, ?, ?, 1)`,
             [
               randomUUID(),
               currentUserId,
               connectionItem.type,
-              connectionItem.id,
-              connectionItem.name,
-              connectionItem.name,
+              connectionItem.externalId,
+              connectionItem.handle,
+              connectionItem.displayName,
+              connectionItem.profileUrl,
+              connectionItem.avatarUrl,
               connectionItem.verified ? 1 : 0,
             ],
           );
