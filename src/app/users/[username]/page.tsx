@@ -7,6 +7,7 @@ import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connectio
 import { PlatformIcon } from "@/components/platform-icon";
 import { LocalDateTime } from "@/components/local-date-time";
 import { BrandMark } from "@/components/brand-mark";
+import { ProfileSafetyActions } from "@/components/profile-safety-actions";
 
 type UserRow = RowDataPacket & {
   id: string;
@@ -30,6 +31,7 @@ type ConnectionRow = RowDataPacket & { connection_type: string; external_id: str
 type TeamRow = RowDataPacket & { id: string; slug: string; name: string; tag: string | null; logo_url: string | null; role: string };
 type WorkspaceRow = RowDataPacket & { id: string; name: string; icon_url: string | null; banner_url: string | null; role: string };
 type EventRow = RowDataPacket & { id: string; name: string; status: string; starts_at: Date | null; workspace_name: string };
+type BlockRow = RowDataPacket & { blocker_user_id: string; blocked_user_id: string };
 
 export const dynamic = "force-dynamic";
 
@@ -52,15 +54,16 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
   if (user.profile_visibility === "PRIVATE" && !isOwner) notFound();
   if (user.profile_visibility === "MEMBERS" && !viewer) notFound();
 
+  let viewerHasBlocked = false;
   if (viewer && !isOwner) {
-    const blocked = await query<RowDataPacket[]>(
-      `SELECT blocker_user_id FROM user_blocks
+    const blocked = await query<BlockRow[]>(
+      `SELECT blocker_user_id, blocked_user_id FROM user_blocks
        WHERE (blocker_user_id = ? AND blocked_user_id = ?)
-          OR (blocker_user_id = ? AND blocked_user_id = ?)
-       LIMIT 1`,
+          OR (blocker_user_id = ? AND blocked_user_id = ?)`,
       [viewer.userId, user.id, user.id, viewer.userId],
     );
-    if (blocked[0]) notFound();
+    if (blocked.some((item) => item.blocker_user_id === user.id)) notFound();
+    viewerHasBlocked = blocked.some((item) => item.blocker_user_id === viewer.userId);
   }
 
   const [connections, teams, workspaces, events] = await Promise.all([
@@ -103,9 +106,9 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
       <section className="profile-hero" style={user.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(9,11,18,.94), rgba(9,11,18,.55)), url(${user.banner_url})` } : undefined}>
         <div className="profile-hero-user">
           {avatarUrl ? <img className="profile-avatar" src={avatarUrl} alt="" /> : <span className="profile-avatar avatar-fallback">{(user.global_name ?? user.username).slice(0, 1).toUpperCase()}</span>}
-          <div><span className="eyebrow">@{user.site_username}</span><h1>{user.global_name ?? user.username}</h1><p>{user.bio ?? "This player has not added a bio yet."}</p><div className="button-row">{user.main_platform ? <span className="badge">Main platform: {user.main_platform}</span> : null}<span className="badge">Member since {new Date(user.created_at).getFullYear()}</span></div></div>
+          <div><span className="eyebrow">@{user.site_username}</span><h1>{user.global_name ?? user.username}</h1><p>{user.bio ?? "This player has not added a bio yet."}</p><div className="button-row">{user.main_platform ? <span className="badge">Main platform: {user.main_platform}</span> : null}<span className="badge">Member since {new Date(user.created_at).getFullYear()}</span>{viewerHasBlocked ? <span className="badge">Blocked by you</span> : null}</div></div>
         </div>
-        {isOwner ? <Link className="button" href="/dashboard/settings">Edit profile</Link> : null}
+        <div className="button-row">{isOwner ? <Link className="button" href="/dashboard/settings">Edit profile</Link> : null}{viewer && !isOwner ? <ProfileSafetyActions userId={user.id} blocked={viewerHasBlocked} /> : null}</div>
       </section>
 
       {connections.length ? <section className="panel section-stack"><div className="section-header"><div><h2>Game identities</h2><p>Accounts this player has chosen to display.</p></div></div><div className="identity-grid">{connections.map((connection) => {
