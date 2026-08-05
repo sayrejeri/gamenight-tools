@@ -24,16 +24,30 @@ export function LocalDateTime({
     if (Number.isNaN(date.getTime())) return "Invalid date";
 
     const timeZone = browserTimeZone ?? fallbackTimeZone ?? undefined;
-    const formatted = new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone,
-      timeZoneName: "short",
-    }).format(date);
+    let formatted: string;
+    try {
+      formatted = new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone,
+        timeZoneName: "short",
+      }).format(date);
+    } catch {
+      formatted = new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(date);
+    }
 
     if (!includeRelative) return formatted;
     const difference = date.getTime() - Date.now();
-    const minutes = Math.round(difference / 60000);
+    const minutes = Math.round(difference / 60_000);
     const relative = Math.abs(minutes) < 60
       ? new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(minutes, "minute")
       : Math.abs(minutes) < 1440
