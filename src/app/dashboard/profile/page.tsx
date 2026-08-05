@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
@@ -15,24 +16,28 @@ type ConnectionRow = RowDataPacket & {
   is_verified: number;
   is_visible: number;
 };
+type UserRow = RowDataPacket & { site_username: string | null };
 
 export default async function ProfilePage() {
   const session = await requireSession();
-  const connections = await query<ConnectionRow[]>(
-    `SELECT id, source, connection_type, external_id, handle, display_name,
-            profile_url, avatar_url, is_verified, is_visible
-     FROM user_connections WHERE user_id = ?
-     ORDER BY source ASC, connection_type ASC`,
-    [session.userId],
-  );
+  const [connections, users] = await Promise.all([
+    query<ConnectionRow[]>(
+      `SELECT id, source, connection_type, external_id, handle, display_name,
+              profile_url, avatar_url, is_verified, is_visible
+       FROM user_connections WHERE user_id = ?
+       ORDER BY source ASC, connection_type ASC`,
+      [session.userId],
+    ),
+    query<UserRow[]>(`SELECT site_username FROM users WHERE id = ? LIMIT 1`, [session.userId]),
+  ]);
 
   return (
     <div className="section-stack">
       <section className="page-heading">
-        <div>
-          <span className="eyebrow">Your profile</span>
-          <h1>Game identities</h1>
-          <p>Connections imported from Discord can be changed, hidden, or replaced with your preferred usernames.</p>
+        <div><span className="eyebrow">Your profile</span><h1>Game identities</h1><p>Connections imported from Discord can be changed, hidden, or replaced with your preferred usernames and linked profile pictures.</p></div>
+        <div className="button-row">
+          <Link className="button button-secondary" href="/dashboard/settings">Profile settings</Link>
+          {users[0]?.site_username ? <Link className="button" href={`/users/${users[0].site_username}`}>View public profile</Link> : null}
         </div>
       </section>
       <ProfileConnectionsForm connections={connections} />
