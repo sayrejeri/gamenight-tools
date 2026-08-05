@@ -4,12 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatConnectionType } from "@/lib/connections";
 
-type ConnectionOption = {
-  id: string;
-  connection_type: string;
-  handle: string;
-  display_name: string | null;
-};
+type ConnectionOption = { id: string; connection_type: string; handle: string; display_name: string | null };
 
 export function EventSignupControls({
   eventId,
@@ -79,7 +74,9 @@ export function EventSignupControls({
     }
   }
 
-  const activeParticipant = participantStatus && !["WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus);
+  const pendingCompletion = participantStatus === "PENDING";
+  const activeParticipant = Boolean(participantStatus && !["PENDING", "WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus));
+  const canStartSignup = eventStatus === "SIGNUPS_OPEN" && (!activeParticipant || pendingCompletion);
 
   return (
     <div className="form-stack">
@@ -88,17 +85,16 @@ export function EventSignupControls({
           <label htmlFor="signup-connection">{formatConnectionType(requiredConnectionType)} account used for this event</label>
           {matchingConnections.length ? (
             <select id="signup-connection" value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
-              {matchingConnections.map((connection) => (
-                <option value={connection.id} key={connection.id}>{connection.display_name ?? connection.handle} (@{connection.handle})</option>
-              ))}
+              {matchingConnections.map((connection) => <option value={connection.id} key={connection.id}>{connection.display_name ?? connection.handle} (@{connection.handle})</option>)}
             </select>
           ) : <p className="error-banner">Add a visible {formatConnectionType(requiredConnectionType)} identity on your profile first.</p>}
         </div>
       ) : null}
 
-      {eventStatus === "SIGNUPS_OPEN" && !activeParticipant ? (
+      {pendingCompletion ? <p className="muted">Your join code was accepted. Select the account you will use and complete your signup.</p> : null}
+      {canStartSignup ? (
         <button className="button" type="button" disabled={busy || (Boolean(requiredConnectionType) && !matchingConnections.length)} onClick={() => run("SIGN_UP")}>
-          {busy ? "Updating…" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
+          {busy ? "Updating…" : pendingCompletion ? "Complete signup" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
         </button>
       ) : null}
 
