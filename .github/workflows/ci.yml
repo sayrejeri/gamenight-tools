@@ -25,3 +25,23 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Prepare DirectAdmin deployment bundle
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          rm -rf deploy
+          mkdir -p deploy
+          cp .next/standalone/server.js deploy/server.js
+          cp package.json deploy/package.json
+          cp -a .next/standalone/.next deploy/.next
+          cp -a .next/static deploy/.next/static
+          cp -a public deploy/public
+
+      - name: Upload DirectAdmin deployment bundle
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamenight-tools-directadmin
+          path: deploy/
+          include-hidden-files: true
+          retention-days: 14
