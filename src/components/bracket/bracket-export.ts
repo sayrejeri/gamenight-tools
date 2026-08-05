@@ -1,4 +1,4 @@
-import type { DerivedMatch, Participant } from "@/components/bracket/bracket-model";
+import { getMatchSlotLabel, type DerivedMatch, type Participant } from "@/components/bracket/bracket-model";
 
 type BracketExportInput = {
   title: string;
@@ -168,9 +168,9 @@ export function downloadBracketPng(input: BracketExportInput): string | null {
         context.stroke();
         context.font = "600 17px system-ui";
         context.fillStyle = match.winner?.id === match.a?.id ? "#63d3a5" : "#f4f6fb";
-        context.fillText(truncate(match.a?.name ?? "BYE", 22), x + 12, y + 25);
+        context.fillText(truncate(getMatchSlotLabel(match, "a"), 22), x + 12, y + 25);
         context.fillStyle = match.winner?.id === match.b?.id ? "#63d3a5" : "#f4f6fb";
-        context.fillText(truncate(match.b?.name ?? "BYE", 22), x + 12, y + 63);
+        context.fillText(truncate(getMatchSlotLabel(match, "b"), 22), x + 12, y + 63);
       });
     });
 
