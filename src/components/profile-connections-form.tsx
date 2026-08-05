@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connections";
+import { PlatformIcon } from "@/components/platform-icon";
 
 type Connection = {
   id: string;
@@ -78,7 +79,7 @@ export function ProfileConnectionsForm({ connections }: { connections: Connectio
       });
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Connection could not be added.");
-      setMessage("Connection added. Roblox identities automatically receive a linked avatar and profile when found.");
+      setMessage("Connection added. Recognized accounts automatically receive a linked profile and avatar when available.");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Connection could not be added.");
@@ -92,12 +93,11 @@ export function ProfileConnectionsForm({ connections }: { connections: Connectio
       {connections.length === 0 ? <p className="muted">No game identities have been imported or added yet.</p> : null}
       {connections.map((connection) => {
         const profileUrl = buildConnectionProfileUrl(connection.connection_type, connection.external_id, connection.handle, connection.profile_url);
+        const icon = <PlatformIcon type={connection.connection_type} avatarUrl={connection.avatar_url} size="large" />;
         return (
           <form className="connection-row" key={connection.id} action={(formData) => save(connection, formData)}>
             <div className="identity-heading">
-              {connection.avatar_url ? (
-                profileUrl ? <a href={profileUrl} target="_blank" rel="noreferrer"><img className="game-avatar" src={connection.avatar_url} alt="" /></a> : <img className="game-avatar" src={connection.avatar_url} alt="" />
-              ) : <div className="game-avatar avatar-fallback">{formatConnectionType(connection.connection_type).slice(0, 1)}</div>}
+              {profileUrl ? <a href={profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${formatConnectionType(connection.connection_type)} profile`}>{icon}</a> : icon}
               <div>
                 <strong>{formatConnectionType(connection.connection_type)}</strong>
                 <span className="badge">{connection.source === "DISCORD" ? "Imported from Discord" : "Manual"}</span>
@@ -117,7 +117,7 @@ export function ProfileConnectionsForm({ connections }: { connections: Connectio
               </div>
             </div>
 
-            <label className="checkbox-row"><input name="visible" type="checkbox" defaultChecked={Boolean(connection.is_visible)} />Visible to event hosts when needed</label>
+            <label className="checkbox-row"><input name="visible" type="checkbox" defaultChecked={Boolean(connection.is_visible)} />Visible on your profile and to event hosts when needed</label>
             <div className="button-row">
               <button className="button" type="submit" disabled={busyId === connection.id}>Save</button>
               <button className="button button-danger" type="button" disabled={busyId === connection.id} onClick={() => remove(connection.id)}>Remove</button>
@@ -150,7 +150,7 @@ export function ProfileConnectionsForm({ connections }: { connections: Connectio
         </div>
         <label htmlFor="new-display-name">Preferred display name</label>
         <input id="new-display-name" name="displayName" />
-        <label className="checkbox-row"><input name="visible" type="checkbox" defaultChecked />Visible to event hosts when needed</label>
+        <label className="checkbox-row"><input name="visible" type="checkbox" defaultChecked />Visible on your profile and to event hosts when needed</label>
         <button className="button" type="submit" disabled={busyId === "new"}>{busyId === "new" ? "Adding…" : "Add connection"}</button>
       </form>
 
