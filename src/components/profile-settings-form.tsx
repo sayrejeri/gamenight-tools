@@ -68,7 +68,7 @@ export function ProfileSettingsForm({ initial, onboarding = false }: { initial: 
   return (
     <form className="panel section-stack" action={save}>
       <div className="section-header"><div><h2>{onboarding ? "Set up your site profile" : "Profile details"}</h2><p>Your Discord account stays connected, while your site username remains stable if your Discord username changes.</p></div></div>
-      <div className="two-column">
+      <div className="two-column profile-primary-fields">
         <div className="form-stack compact">
           <label htmlFor="site-username">Site username</label>
           <input id="site-username" name="siteUsername" defaultValue={initial.siteUsername} minLength={3} maxLength={40} pattern="[a-zA-Z0-9_-]+" required />
@@ -77,6 +77,7 @@ export function ProfileSettingsForm({ initial, onboarding = false }: { initial: 
         <div className="form-stack compact">
           <label htmlFor="main-platform">Main gaming platform</label>
           <input id="main-platform" name="mainPlatform" list="main-platforms" defaultValue={initial.mainPlatform} placeholder="Roblox" />
+          <span className="field-help">Used as your primary platform across profiles and events.</span>
           <datalist id="main-platforms"><option value="Roblox" /><option value="Minecraft" /><option value="Steam" /><option value="Xbox" /><option value="PlayStation" /><option value="Epic Games" /></datalist>
         </div>
       </div>
