@@ -1,0 +1,40 @@
+.participant-management-list {
+  display: grid;
+  gap: 12px;
+}
+
+.participant-management-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.participant-status-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 290px;
+}
+
+.participant-status-control select {
+  min-width: 145px;
+}
+
+@media (max-width: 760px) {
+  .participant-management-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .participant-status-control {
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
