@@ -6,8 +6,8 @@ import { RedeemCodeForm } from "@/components/redeem-code-form";
 import { CohostResponseButtons } from "@/components/cohost-response-buttons";
 import { LocalDateTime } from "@/components/local-date-time";
 
-type WorkspaceRow = RowDataPacket & { id: string; name: string; discord_guild_id: string; role: string };
-type DiscoveredWorkspaceRow = RowDataPacket & { id: string; name: string; discord_guild_id: string; role: string | null; main_game_category: string | null };
+type WorkspaceRow = RowDataPacket & { id: string; name: string; discord_guild_id: string; role: string; icon_url: string | null; banner_url: string | null; main_game_category: string | null; verification_level: string | null };
+type DiscoveredWorkspaceRow = RowDataPacket & { id: string; name: string; discord_guild_id: string; role: string | null; icon_url: string | null; banner_url: string | null; main_game_category: string | null; verification_level: string | null };
 type EventRow = RowDataPacket & {
   id: string;
   name: string;
@@ -23,20 +23,43 @@ type EventRow = RowDataPacket & {
 };
 type InvitationRow = RowDataPacket & { id: string; event_name: string; workspace_name: string; permission_level: string };
 
+function WorkspaceCard({ workspace }: { workspace: WorkspaceRow | DiscoveredWorkspaceRow }) {
+  return (
+    <Link
+      className="organization-card server-banner-card"
+      href={`/dashboard/workspaces/${workspace.id}`}
+      style={workspace.banner_url ? { backgroundImage: `linear-gradient(180deg, rgba(17,21,34,.25), rgba(17,21,34,.98)), url(${workspace.banner_url})` } : undefined}
+    >
+      <div className="organization-card-top">
+        {workspace.icon_url ? <img src={workspace.icon_url} alt="" /> : <span className="organization-logo-fallback">{workspace.name.slice(0, 2)}</span>}
+        <div><span className="card-kicker">{workspace.role ?? "SERVER MEMBER"}</span><h3>{workspace.name}</h3></div>
+      </div>
+      <div className="button-row">
+        {workspace.main_game_category ? <span className="badge">{workspace.main_game_category}</span> : null}
+        {workspace.verification_level ? <span className="badge">✓ {workspace.verification_level.replaceAll("_", " ")}</span> : null}
+      </div>
+    </Link>
+  );
+}
+
 export default async function DashboardPage() {
   const session = await requireSession();
   const [memberships, discovered, events, invitations] = await Promise.all([
     query<WorkspaceRow[]>(
-      `SELECT w.id, w.name, w.discord_guild_id, wm.role
+      `SELECT w.id, w.name, w.discord_guild_id, w.icon_url, w.banner_url,
+              w.main_game_category, w.verification_level, wm.role
        FROM workspace_members wm INNER JOIN workspaces w ON w.id = wm.workspace_id
-       WHERE wm.user_id = ? AND wm.status = 'ACTIVE' ORDER BY w.name`,
+       WHERE wm.user_id = ? AND wm.status = 'ACTIVE' AND w.profile_status = 'APPROVED'
+       ORDER BY w.name`,
       [session.userId],
     ),
     query<DiscoveredWorkspaceRow[]>(
-      `SELECT w.id, w.name, w.discord_guild_id, w.main_game_category, wm.role
+      `SELECT w.id, w.name, w.discord_guild_id, w.icon_url, w.banner_url,
+              w.main_game_category, w.verification_level, wm.role
        FROM workspaces w
        INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id AND ug.user_id = ?
        LEFT JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ? AND wm.status = 'ACTIVE'
+       WHERE w.profile_status = 'APPROVED'
        ORDER BY w.name`,
       [session.userId, session.userId],
     ),
@@ -75,78 +98,23 @@ export default async function DashboardPage() {
   return (
     <div className="section-stack">
       <section className="page-heading">
-        <div><span className="eyebrow">Your control center</span><h1>Game night dashboard</h1><p>Server events appear automatically when your Discord membership matches a registered workspace.</p></div>
-        {isPlatformOwner(session.discordId) ? <Link className="button button-secondary" href="/dashboard/admin/setup">Create server profile</Link> : null}
+        <div><span className="eyebrow">Your control center</span><h1>Game night dashboard</h1><p>Server events appear automatically when your Discord membership matches an approved server profile.</p></div>
+        <div className="button-row">
+          <Link className="button" href="/dashboard/profile-requests">Request a profile</Link>
+          {isPlatformOwner(session.discordId) ? <Link className="button button-secondary" href="/dashboard/admin/setup">Direct server setup</Link> : null}
+        </div>
       </section>
 
-      {invitations.length ? (
-        <section className="panel section-stack">
-          <div className="section-header"><div><h2>Co-host invitations</h2><p>Accepting lets you modify the event using the permission selected by its host.</p></div></div>
-          <div className="event-grid">
-            {invitations.map((invitation) => (
-              <article className="event-card" key={invitation.id}>
-                <span className="card-kicker">{invitation.workspace_name}</span><h3>{invitation.event_name}</h3>
-                <p>Permission: {invitation.permission_level.replaceAll("_", " ").toLowerCase()}</p>
-                <CohostResponseButtons invitationId={invitation.id} />
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      {invitations.length ? <section className="panel section-stack"><div className="section-header"><div><h2>Co-host invitations</h2><p>Accepting lets you modify the event using the permission selected by its host.</p></div></div><div className="event-grid">{invitations.map((invitation) => <article className="event-card" key={invitation.id}><span className="card-kicker">{invitation.workspace_name}</span><h3>{invitation.event_name}</h3><p>Permission: {invitation.permission_level.replaceAll("_", " ").toLowerCase()}</p><CohostResponseButtons invitationId={invitation.id} /></article>)}</div></section> : null}
 
       <div className="dashboard-grid">
-        <section className="panel section-stack">
-          <div className="section-header"><div><h2>Your workspaces</h2><p>Server profiles where you have an approved role.</p></div></div>
-          {memberships.length ? (
-            <div className="workspace-grid">
-              {memberships.map((workspace) => (
-                <Link className="workspace-card" href={`/dashboard/workspaces/${workspace.id}`} key={workspace.id}>
-                  <span className="card-kicker">{workspace.role}</span><h3>{workspace.name}</h3><p>Discord server ID: {workspace.discord_guild_id}</p>
-                </Link>
-              ))}
-            </div>
-          ) : <div className="empty-state">You have not been approved as staff or a host for a server profile yet.</div>}
-        </section>
-
-        <section className="panel section-stack">
-          <div className="section-header"><div><h2>Enter a code</h2><p>Redeem a code provided by server staff to join an event or receive host access.</p></div></div>
-          <RedeemCodeForm />
-        </section>
+        <section className="panel section-stack"><div className="section-header"><div><h2>Your workspaces</h2><p>Server profiles where you have an approved role.</p></div></div>{memberships.length ? <div className="organization-grid">{memberships.map((workspace) => <WorkspaceCard workspace={workspace} key={workspace.id} />)}</div> : <div className="empty-state">You have not been approved as staff or a host for a server profile yet.</div>}</section>
+        <section className="panel section-stack"><div className="section-header"><div><h2>Enter a code</h2><p>Redeem a code provided by server staff to join an event or receive host access.</p></div></div><RedeemCodeForm /></section>
       </div>
 
-      <section className="panel section-stack">
-        <div className="section-header"><div><h2>Registered servers you are in</h2><p>Detected from the Discord servers authorized during login. A bot is not required.</p></div></div>
-        {uniqueDiscovered.length ? (
-          <div className="workspace-grid">
-            {uniqueDiscovered.map((workspace) => (
-              <Link className="workspace-card" href={`/dashboard/workspaces/${workspace.id}`} key={workspace.id}>
-                <span className="card-kicker">{workspace.role ?? "SERVER MEMBER"}</span><h3>{workspace.name}</h3>
-                <p>{workspace.main_game_category ?? (workspace.role ? "You have workspace access." : "You can see member-visible events.")}</p>
-              </Link>
-            ))}
-          </div>
-        ) : <div className="empty-state">None of your Discord servers have a Game Night Tools profile yet.</div>}
-      </section>
+      <section className="panel section-stack"><div className="section-header"><div><h2>Registered servers you are in</h2><p>Detected from the Discord servers authorized during login. A bot is not required.</p></div></div>{uniqueDiscovered.length ? <div className="organization-grid">{uniqueDiscovered.map((workspace) => <WorkspaceCard workspace={workspace} key={workspace.id} />)}</div> : <div className="empty-state">None of your Discord servers have an approved Game Night Tools profile yet.</div>}</section>
 
-      <section className="panel section-stack">
-        <div className="section-header"><div><h2>Events available to you</h2><p>Published server events, assigned events, and your managed drafts appear here.</p></div></div>
-        {events.length ? (
-          <div className="event-grid">
-            {events.map((event) => (
-              <Link className="event-card event-card-media" href={`/dashboard/events/${event.id}`} key={event.id}>
-                {event.game_thumbnail_url ? <img src={event.game_thumbnail_url} alt="" /> : null}
-                <div>
-                  <span className="card-kicker">{event.workspace_name}</span><h3>{event.name}</h3>
-                  <p>{event.subgame_name ?? event.game_name ?? event.platform_name ?? "Game not selected"}</p>
-                  <p><LocalDateTime value={event.starts_at ? new Date(event.starts_at).toISOString() : null} fallbackTimeZone={event.timezone} includeRelative /></p>
-                  <span className="badge">{event.status.replaceAll("_", " ")}</span>
-                  {event.join_code_required ? <span className="badge">Join code required</span> : null}
-                </div>
-              </Link>
-            ))}
-          </div>
-        ) : <div className="empty-state">There are no visible upcoming events yet.</div>}
-      </section>
+      <section className="panel section-stack"><div className="section-header"><div><h2>Events available to you</h2><p>Published server events, assigned events, and your managed drafts appear here.</p></div></div>{events.length ? <div className="event-grid">{events.map((event) => <Link className="event-card event-card-media" href={`/dashboard/events/${event.id}`} key={event.id}>{event.game_thumbnail_url ? <img src={event.game_thumbnail_url} alt="" /> : <div className="event-image-fallback">GN</div>}<div><span className="card-kicker">{event.workspace_name}</span><h3>{event.name}</h3><p>{event.subgame_name ?? event.game_name ?? event.platform_name ?? "Game not selected"}</p><p><LocalDateTime value={event.starts_at ? new Date(event.starts_at).toISOString() : null} fallbackTimeZone={event.timezone} includeRelative /></p><span className="badge">{event.status.replaceAll("_", " ")}</span>{event.join_code_required ? <span className="badge">Join code required</span> : null}</div></Link>)}</div> : <div className="empty-state">There are no visible upcoming events yet.</div>}</section>
     </div>
   );
 }
