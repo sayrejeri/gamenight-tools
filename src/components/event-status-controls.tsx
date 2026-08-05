@@ -65,6 +65,7 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
     <div className="form-stack">
       <div className="button-row">
         <Link className="button button-secondary" href={`/dashboard/events/${eventId}/edit`}>Edit event</Link>
+        <Link className="button button-secondary" href={`/dashboard/events/${eventId}/participants`}>Manage participants</Link>
         {buttons.map((button) => (
           <button
             className={`button ${button.danger ? "button-danger" : button.action === "POSTPONE" || button.action === "REOPEN_DRAFT" ? "button-secondary" : ""}`}
