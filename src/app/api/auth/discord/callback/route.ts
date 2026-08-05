@@ -3,12 +3,18 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { createSessionToken, sessionCookieOptions } from "@/lib/auth";
-import { getPool, withTransaction } from "@/lib/db";
+import { withTransaction } from "@/lib/db";
 import { exchangeDiscordCode, fetchDiscordProfile } from "@/lib/discord";
 
 export const dynamic = "force-dynamic";
 
 type UserIdRow = RowDataPacket & { id: string };
+type LoginStage = "discord_token" | "discord_profile" | "database" | "session";
+
+function appUrl(path: string, request: NextRequest): URL {
+  const baseUrl = process.env.APP_URL ?? request.nextUrl.origin;
+  return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+}
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -18,13 +24,18 @@ export async function GET(request: NextRequest) {
   const expectedState = cookieStore.get("discord_oauth_state")?.value;
 
   if (!code || !state || !expectedState || state !== expectedState) {
-    return NextResponse.redirect(new URL("/?authError=invalid_state", request.url));
+    return NextResponse.redirect(appUrl("/?authError=invalid_state", request));
   }
+
+  let stage: LoginStage = "discord_token";
 
   try {
     const accessToken = await exchangeDiscordCode(code);
+
+    stage = "discord_profile";
     const { user, guilds, connections } = await fetchDiscordProfile(accessToken);
 
+    stage = "database";
     const userId = await withTransaction(async (connection) => {
       await connection.execute<ResultSetHeader>(
         `INSERT INTO users (discord_id, username, global_name, avatar_hash, last_login_at)
@@ -113,6 +124,7 @@ export async function GET(request: NextRequest) {
       return currentUserId;
     });
 
+    stage = "session";
     const token = await createSessionToken({
       userId,
       discordId: user.id,
@@ -121,13 +133,15 @@ export async function GET(request: NextRequest) {
       avatarHash: user.avatar ?? null,
     });
 
-    const response = NextResponse.redirect(new URL("/dashboard", request.url));
+    const response = NextResponse.redirect(appUrl("/dashboard", request));
     const options = sessionCookieOptions();
     response.cookies.set(options.name, token, options);
     response.cookies.delete("discord_oauth_state");
     return response;
   } catch (error) {
-    console.error("Discord OAuth callback failed", error);
-    return NextResponse.redirect(new URL("/?authError=discord_login_failed", request.url));
+    console.error(`Discord OAuth callback failed during ${stage}`, error);
+    return NextResponse.redirect(
+      appUrl(`/?authError=discord_login_failed&stage=${encodeURIComponent(stage)}`, request),
+    );
   }
 }
