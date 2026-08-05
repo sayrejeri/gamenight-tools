@@ -109,13 +109,16 @@ export async function PATCH(
     await connection.execute(
       `UPDATE events
        SET status = ?,
+           approved_by = IF(? = 'APPROVE', ?, approved_by),
+           approved_at = IF(? = 'APPROVE', CURRENT_TIMESTAMP(3), approved_at),
            published_at = IF(? = 'SIGNUPS_OPEN' AND published_at IS NULL, CURRENT_TIMESTAMP(3), published_at),
            signups_closed_at = IF(? IN ('SIGNUPS_CLOSED', 'CHECK_IN_OPEN', 'LIVE'), CURRENT_TIMESTAMP(3), signups_closed_at),
            updated_at = CURRENT_TIMESTAMP(3)
        WHERE id = ?`,
-      [nextStatus, nextStatus, nextStatus, eventId],
+      [nextStatus, action, session.userId, action, nextStatus, nextStatus, eventId],
     );
 
+    let result = { generated: false, participantCount: 0 };
     if (
       ["CLOSE_SIGNUPS", "OPEN_CHECKIN", "START"].includes(action)
       && event.bracket_enabled
@@ -123,7 +126,7 @@ export async function PATCH(
       && event.bracket_format
       && event.bracket_seeding_mode
     ) {
-      return generateEventBracket(connection, {
+      result = await generateEventBracket(connection, {
         eventId,
         eventName: event.name,
         format: event.bracket_format,
@@ -132,7 +135,23 @@ export async function PATCH(
       });
     }
 
-    return { generated: false, participantCount: 0 };
+    if (action === "START" && event.bracket_enabled) {
+      await connection.execute(
+        `UPDATE brackets SET status = 'LIVE', updated_at = CURRENT_TIMESTAMP(3)
+         WHERE event_id = ?`,
+        [eventId],
+      );
+    }
+    if (action === "COMPLETE" && event.bracket_enabled) {
+      await connection.execute(
+        `UPDATE brackets
+         SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
+         WHERE event_id = ?`,
+        [eventId],
+      );
+    }
+
+    return result;
   });
 
   await writeAuditLog({
