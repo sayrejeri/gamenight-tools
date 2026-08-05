@@ -2,10 +2,26 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./expanded.css";
 import "./management.css";
+import "./community.css";
 
 export const metadata: Metadata = {
-  title: "Game Night Tools",
-  description: "Discord-powered game night events, signups, hosts, brackets, and shared server workspaces.",
+  title: {
+    default: "Game Night Tools",
+    template: "%s · Game Night Tools",
+  },
+  description: "Discord-powered events, teams, community profiles, suggestions, tools, and server workspaces.",
+  applicationName: "Game Night Tools",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
+  openGraph: {
+    title: "Game Night Tools",
+    description: "Run game nights, build teams, manage communities, and organize events from one Discord-connected platform.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
