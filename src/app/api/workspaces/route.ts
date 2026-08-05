@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
-import { isPlatformOwner, readSession } from "@/lib/auth";
-import { getPool, query, withTransaction } from "@/lib/db";
-import { writeAuditLog } from "@/lib/audit";
 import { z } from "zod";
+import { isPlatformOwner, readSession } from "@/lib/auth";
+import { query, withTransaction } from "@/lib/db";
+import { writeAuditLog } from "@/lib/audit";
 
+const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
 const createWorkspaceSchema = z.object({
   guildId: z.string().regex(/^\d{15,25}$/),
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(2000).optional(),
   timezone: z.string().trim().min(2).max(100).default("America/Detroit"),
   ownerDiscordIds: z.array(z.string().regex(/^\d{15,25}$/)).min(1).max(25),
+  discordInviteUrl: optionalUrl,
+  mainGameCategory: z.string().trim().max(80).nullable().optional(),
+  robloxCommunityName: z.string().trim().max(191).nullable().optional(),
+  robloxCommunityUrl: optionalUrl,
 });
 
 type WorkspaceRow = RowDataPacket & {
@@ -60,13 +65,18 @@ export async function POST(request: NextRequest) {
     await withTransaction(async (connection) => {
       await connection.execute(
         `INSERT INTO workspaces
-          (id, discord_guild_id, name, description, timezone, created_by)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (id, discord_guild_id, name, description, discord_invite_url, main_game_category,
+           roblox_community_url, roblox_community_name, timezone, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           workspaceId,
           parsed.data.guildId,
           parsed.data.name,
           parsed.data.description ?? null,
+          parsed.data.discordInviteUrl || null,
+          parsed.data.mainGameCategory || null,
+          parsed.data.robloxCommunityUrl || null,
+          parsed.data.robloxCommunityName || null,
           parsed.data.timezone,
           session.userId,
         ],
@@ -96,7 +106,7 @@ export async function POST(request: NextRequest) {
       action: "workspace.created",
       targetType: "workspace",
       targetId: workspaceId,
-      details: { guildId: parsed.data.guildId, ownerDiscordIds: ownerIds },
+      details: { guildId: parsed.data.guildId, ownerDiscordIds: ownerIds, mainGameCategory: parsed.data.mainGameCategory },
     });
 
     return NextResponse.json({ workspaceId }, { status: 201 });
