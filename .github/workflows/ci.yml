@@ -34,7 +34,7 @@ jobs:
           cp server.js deploy/server.js
           cp package.json deploy/package.json
           cp -a .next deploy/.next
-          cp -a public deploy/public
+          if [ -d public ]; then cp -a public deploy/public; fi
 
       - name: Upload DirectAdmin deployment bundle
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
