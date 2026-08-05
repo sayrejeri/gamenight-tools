@@ -23,7 +23,7 @@ export default async function StaffDashboardPage() {
               pr.main_game, pr.discord_guild_id, pr.created_at,
               COALESCE(u.site_username, u.global_name, u.username) AS applicant_name
        FROM profile_requests pr INNER JOIN users u ON u.id = pr.applicant_user_id
-       WHERE pr.status IN ('PENDING', 'CHANGES_REQUESTED') ORDER BY pr.created_at ASC LIMIT 100`,
+       WHERE pr.status = 'PENDING' ORDER BY pr.created_at ASC LIMIT 100`,
     ) : Promise.resolve([] as RequestRow[]),
     canModeratePlatform(role) ? query<ReportRow[]>(
       `SELECT r.id, r.target_type, r.target_id, r.reason, r.details, r.status, r.created_at,
