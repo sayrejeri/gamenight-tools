@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import { formatConnectionType, normalizeConnectionType } from "@/lib/connections";
 
 const SIMPLE_ICON_SLUGS: Record<string, string> = {
@@ -28,11 +31,16 @@ export function platformIconUrl(type: string): string | null {
 }
 
 export function PlatformIcon({ type, avatarUrl, size = "medium" }: { type: string; avatarUrl?: string | null; size?: "small" | "medium" | "large" }) {
-  const iconUrl = avatarUrl || platformIconUrl(type);
   const label = formatConnectionType(type);
+  const source = useMemo(() => platformIconUrl(type) ?? avatarUrl ?? null, [type, avatarUrl]);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setFailed(false), [source]);
+
   return (
     <span className={`platform-icon platform-icon-${size}`} aria-hidden="true">
-      {iconUrl ? <img src={iconUrl} alt="" /> : <strong>{label.slice(0, 2).toUpperCase()}</strong>}
+      <strong>{label.slice(0, 2).toUpperCase()}</strong>
+      {source && !failed ? <img src={source} alt="" onError={() => setFailed(true)} /> : null}
     </span>
   );
 }
