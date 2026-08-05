@@ -23,6 +23,18 @@ const requestSchema = z.object({
   region: z.string().trim().max(80).optional().default(""),
 });
 
+function canManageDiscordGuild(isOwner: number, permissionsValue: string): boolean {
+  if (isOwner) return true;
+  try {
+    const permissions = BigInt(permissionsValue || "0");
+    const administrator = 1n << 3n;
+    const manageGuild = 1n << 5n;
+    return Boolean((permissions & administrator) || (permissions & manageGuild));
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -37,19 +49,47 @@ export async function POST(request: NextRequest) {
        WHERE user_id = ? AND guild_id = ? LIMIT 1`,
       [session.userId, data.discordGuildId],
     );
-    if (!guilds[0]) return NextResponse.json({ error: "That Discord server was not found in your authorized server list." }, { status: 403 });
-    const duplicate = await query<RowDataPacket[]>(`SELECT id FROM workspaces WHERE discord_guild_id = ? LIMIT 1`, [data.discordGuildId]);
-    if (duplicate[0]) return NextResponse.json({ error: "That Discord server already has a profile." }, { status: 409 });
+    const guild = guilds[0];
+    if (!guild) return NextResponse.json({ error: "That Discord server was not found in your authorized server list." }, { status: 403 });
+    if (!canManageDiscordGuild(guild.is_owner, guild.permissions_value)) {
+      return NextResponse.json({ error: "You must own the Discord server or have Manage Server permission to request its profile." }, { status: 403 });
+    }
+    const duplicates = await query<RowDataPacket[]>(
+      `SELECT id FROM workspaces WHERE discord_guild_id = ?
+       UNION ALL
+       SELECT id FROM profile_requests
+       WHERE request_type = 'SERVER' AND discord_guild_id = ?
+         AND status IN ('PENDING', 'CHANGES_REQUESTED', 'APPROVED')
+       LIMIT 1`,
+      [data.discordGuildId, data.discordGuildId],
+    );
+    if (duplicates[0]) return NextResponse.json({ error: "That Discord server already has a profile or an active request." }, { status: 409 });
   }
 
   const requestedSlug = slugifyProfileName(data.slug || data.name);
   if (data.requestType === "TEAM") {
     const duplicates = await query<RowDataPacket[]>(
       `SELECT id FROM teams WHERE slug = ?
-       UNION ALL SELECT id FROM profile_requests WHERE request_type = 'TEAM' AND requested_slug = ? AND status IN ('PENDING', 'CHANGES_REQUESTED', 'APPROVED') LIMIT 1`,
+       UNION ALL
+       SELECT id FROM profile_requests
+       WHERE request_type = 'TEAM' AND requested_slug = ?
+         AND status IN ('PENDING', 'CHANGES_REQUESTED', 'APPROVED')
+       LIMIT 1`,
       [requestedSlug, requestedSlug],
     );
     if (duplicates[0]) return NextResponse.json({ error: "That team URL is already in use or under review." }, { status: 409 });
+
+    if (data.homeWorkspaceId) {
+      const workspaceAccess = await query<RowDataPacket[]>(
+        `SELECT workspace_id FROM workspace_members
+         WHERE workspace_id = ? AND user_id = ? AND status = 'ACTIVE' AND role IN ('OWNER', 'ADMIN')
+         LIMIT 1`,
+        [data.homeWorkspaceId, session.userId],
+      );
+      if (!workspaceAccess[0]) {
+        return NextResponse.json({ error: "Only that server profile's owner or admin can affiliate a new team with it." }, { status: 403 });
+      }
+    }
   }
 
   const id = randomUUID();
