@@ -34,6 +34,7 @@ jobs:
           cp server.js deploy/server.js
           cp package.json deploy/package.json
           cp -a .next deploy/.next
+          rm -rf deploy/.next/cache deploy/.next/types deploy/.next/diagnostics
           if [ -d public ]; then cp -a public deploy/public; fi
 
       - name: Upload DirectAdmin deployment bundle
