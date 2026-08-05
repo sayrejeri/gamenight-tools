@@ -36,6 +36,8 @@ type EventRow = RowDataPacket & {
   bracket_require_check_in: number;
 };
 
+class TransitionConflict extends Error {}
+
 const allowedFrom: Record<string, string[]> = {
   PUBLISH: ["DRAFT", "POSTPONED"],
   SUBMIT_APPROVAL: ["DRAFT", "POSTPONED"],
@@ -105,54 +107,76 @@ export async function PATCH(
     }[action] ?? event.status;
   }
 
-  const bracketResult = await withTransaction(async (connection) => {
-    await connection.execute(
-      `UPDATE events
-       SET status = ?,
-           approved_by = IF(? = 'APPROVE', ?, approved_by),
-           approved_at = IF(? = 'APPROVE', CURRENT_TIMESTAMP(3), approved_at),
-           published_at = IF(? = 'SIGNUPS_OPEN' AND published_at IS NULL, CURRENT_TIMESTAMP(3), published_at),
-           signups_closed_at = IF(? IN ('SIGNUPS_CLOSED', 'CHECK_IN_OPEN', 'LIVE'), CURRENT_TIMESTAMP(3), signups_closed_at),
-           updated_at = CURRENT_TIMESTAMP(3)
-       WHERE id = ?`,
-      [nextStatus, action, session.userId, action, nextStatus, nextStatus, eventId],
-    );
+  let bracketResult: { generated: boolean; participantCount: number };
+  try {
+    bracketResult = await withTransaction(async (connection) => {
+      let result = { generated: false, participantCount: 0 };
+      if (
+        ["CLOSE_SIGNUPS", "OPEN_CHECKIN", "START"].includes(action)
+        && event.bracket_enabled
+        && event.bracket_auto_generate
+        && event.bracket_format
+        && event.bracket_seeding_mode
+      ) {
+        result = await generateEventBracket(connection, {
+          eventId,
+          eventName: event.name,
+          format: event.bracket_format,
+          seedingMode: event.bracket_seeding_mode,
+          requireCheckIn: Boolean(event.bracket_require_check_in),
+        });
+      }
 
-    let result = { generated: false, participantCount: 0 };
-    if (
-      ["CLOSE_SIGNUPS", "OPEN_CHECKIN", "START"].includes(action)
-      && event.bracket_enabled
-      && event.bracket_auto_generate
-      && event.bracket_format
-      && event.bracket_seeding_mode
-    ) {
-      result = await generateEventBracket(connection, {
-        eventId,
-        eventName: event.name,
-        format: event.bracket_format,
-        seedingMode: event.bracket_seeding_mode,
-        requireCheckIn: Boolean(event.bracket_require_check_in),
-      });
-    }
+      if (action === "START" && event.bracket_enabled) {
+        const [brackets] = await connection.query<(RowDataPacket & { settings_json: string | null })[]>(
+          `SELECT settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`,
+          [eventId],
+        );
+        if (!brackets[0]?.settings_json) {
+          throw new TransitionConflict(
+            event.bracket_seeding_mode === "MANUAL"
+              ? "Place the approved participants and save the bracket before starting the event."
+              : "The bracket could not be generated. Check that enough eligible participants are approved and checked in.",
+          );
+        }
+      }
 
-    if (action === "START" && event.bracket_enabled) {
       await connection.execute(
-        `UPDATE brackets SET status = 'LIVE', updated_at = CURRENT_TIMESTAMP(3)
-         WHERE event_id = ?`,
-        [eventId],
+        `UPDATE events
+         SET status = ?,
+             approved_by = IF(? = 'APPROVE', ?, approved_by),
+             approved_at = IF(? = 'APPROVE', CURRENT_TIMESTAMP(3), approved_at),
+             published_at = IF(? = 'SIGNUPS_OPEN' AND published_at IS NULL, CURRENT_TIMESTAMP(3), published_at),
+             signups_closed_at = IF(? IN ('SIGNUPS_CLOSED', 'CHECK_IN_OPEN', 'LIVE'), CURRENT_TIMESTAMP(3), signups_closed_at),
+             updated_at = CURRENT_TIMESTAMP(3)
+         WHERE id = ?`,
+        [nextStatus, action, session.userId, action, nextStatus, nextStatus, eventId],
       );
-    }
-    if (action === "COMPLETE" && event.bracket_enabled) {
-      await connection.execute(
-        `UPDATE brackets
-         SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
-         WHERE event_id = ?`,
-        [eventId],
-      );
-    }
 
-    return result;
-  });
+      if (action === "START" && event.bracket_enabled) {
+        await connection.execute(
+          `UPDATE brackets SET status = 'LIVE', updated_at = CURRENT_TIMESTAMP(3)
+           WHERE event_id = ?`,
+          [eventId],
+        );
+      }
+      if (action === "COMPLETE" && event.bracket_enabled) {
+        await connection.execute(
+          `UPDATE brackets
+           SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
+           WHERE event_id = ?`,
+          [eventId],
+        );
+      }
+
+      return result;
+    });
+  } catch (error) {
+    if (error instanceof TransitionConflict) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
 
   await writeAuditLog({
     actorUserId: session.userId,
