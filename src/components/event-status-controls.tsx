@@ -1,42 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type Action = "PUBLISH" | "SUBMIT_APPROVAL" | "APPROVE" | "CLOSE_SIGNUPS" | "OPEN_CHECKIN" | "START" | "COMPLETE" | "POSTPONE" | "CANCEL" | "REOPEN_DRAFT";
 
 const buttonsByStatus: Record<string, Array<{ action: Action; label: string; danger?: boolean }>> = {
-  DRAFT: [
-    { action: "PUBLISH", label: "Publish & open signups" },
-    { action: "SUBMIT_APPROVAL", label: "Submit for approval" },
-  ],
-  AWAITING_APPROVAL: [
-    { action: "APPROVE", label: "Approve & open signups" },
-    { action: "POSTPONE", label: "Return to postponed" },
-    { action: "CANCEL", label: "Cancel event", danger: true },
-  ],
-  SIGNUPS_OPEN: [
-    { action: "CLOSE_SIGNUPS", label: "Close signups" },
-    { action: "OPEN_CHECKIN", label: "Open check-in" },
-    { action: "POSTPONE", label: "Postpone" },
-    { action: "CANCEL", label: "Cancel", danger: true },
-  ],
-  SIGNUPS_CLOSED: [
-    { action: "OPEN_CHECKIN", label: "Open check-in" },
-    { action: "START", label: "Start event" },
-    { action: "POSTPONE", label: "Postpone" },
-    { action: "CANCEL", label: "Cancel", danger: true },
-  ],
-  CHECK_IN_OPEN: [
-    { action: "START", label: "Start event" },
-    { action: "POSTPONE", label: "Postpone" },
-    { action: "CANCEL", label: "Cancel", danger: true },
-  ],
-  LIVE: [
-    { action: "COMPLETE", label: "Complete event" },
-    { action: "POSTPONE", label: "Postpone" },
-    { action: "CANCEL", label: "Cancel", danger: true },
-  ],
+  DRAFT: [{ action: "PUBLISH", label: "Publish & open signups" }, { action: "SUBMIT_APPROVAL", label: "Submit for approval" }],
+  AWAITING_APPROVAL: [{ action: "APPROVE", label: "Approve & open signups" }, { action: "POSTPONE", label: "Return to postponed" }, { action: "CANCEL", label: "Cancel event", danger: true }],
+  SIGNUPS_OPEN: [{ action: "CLOSE_SIGNUPS", label: "Close signups" }, { action: "OPEN_CHECKIN", label: "Open check-in" }, { action: "POSTPONE", label: "Postpone" }, { action: "CANCEL", label: "Cancel", danger: true }],
+  SIGNUPS_CLOSED: [{ action: "OPEN_CHECKIN", label: "Open check-in" }, { action: "START", label: "Start event" }, { action: "POSTPONE", label: "Postpone" }, { action: "CANCEL", label: "Cancel", danger: true }],
+  CHECK_IN_OPEN: [{ action: "START", label: "Start event" }, { action: "POSTPONE", label: "Postpone" }, { action: "CANCEL", label: "Cancel", danger: true }],
+  LIVE: [{ action: "COMPLETE", label: "Complete event" }, { action: "POSTPONE", label: "Postpone" }, { action: "CANCEL", label: "Cancel", danger: true }],
   POSTPONED: [{ action: "REOPEN_DRAFT", label: "Reopen as draft" }],
   CANCELLED: [{ action: "REOPEN_DRAFT", label: "Reopen as draft" }],
 };
@@ -85,11 +61,10 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
     }
   }
 
-  if (!buttons.length) return null;
-
   return (
     <div className="form-stack">
       <div className="button-row">
+        <Link className="button button-secondary" href={`/dashboard/events/${eventId}/edit`}>Edit event</Link>
         {buttons.map((button) => (
           <button
             className={`button ${button.danger ? "button-danger" : button.action === "POSTPONE" || button.action === "REOPEN_DRAFT" ? "button-secondary" : ""}`}
