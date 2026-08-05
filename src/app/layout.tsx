@@ -4,6 +4,7 @@ import "./expanded.css";
 import "./management.css";
 import "./community.css";
 import "./safety.css";
+import "./roster.css";
 
 export const metadata: Metadata = {
   title: {
