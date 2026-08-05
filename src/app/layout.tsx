@@ -5,6 +5,7 @@ import "./management.css";
 import "./community.css";
 import "./safety.css";
 import "./roster.css";
+import "./hotfix.css";
 
 export const metadata: Metadata = {
   title: {
