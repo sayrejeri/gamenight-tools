@@ -20,6 +20,8 @@ export type DerivedMatch = {
   index: number;
   a: Participant | null;
   b: Participant | null;
+  aReady: boolean;
+  bReady: boolean;
   winner: Participant | null;
 };
 
@@ -40,24 +42,44 @@ export function shuffle<T>(values: T[]): T[] {
   return copy;
 }
 
+function spreadMatchPositions(pairCount: number, matchCount: number): Set<number> {
+  const positions = new Set<number>();
+  for (let index = 0; index < matchCount; index += 1) {
+    positions.add(Math.floor(((index + 0.5) * pairCount) / matchCount));
+  }
+  return positions;
+}
+
 export function buildFirstRound(participants: Participant[]): Pair[] {
   const size = nextPowerOfTwo(participants.length);
+  const pairCount = size / 2;
   const byeCount = size - participants.length;
+  const playedMatchCount = pairCount - byeCount;
+  const playedMatchPositions = spreadMatchPositions(pairCount, playedMatchCount);
   const pairs: Pair[] = [];
   let cursor = 0;
 
-  for (let index = 0; index < byeCount; index += 1) {
-    pairs.push([participants[cursor] ?? null, null]);
+  for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+    const a = participants[cursor] ?? null;
     cursor += 1;
+
+    if (playedMatchPositions.has(pairIndex)) {
+      const b = participants[cursor] ?? null;
+      cursor += 1;
+      pairs.push([a, b]);
+    } else {
+      pairs.push([a, null]);
+    }
   }
 
-  while (cursor < participants.length) {
-    pairs.push([participants[cursor] ?? null, participants[cursor + 1] ?? null]);
-    cursor += 2;
-  }
-
-  while (pairs.length < size / 2) pairs.push([null, null]);
   return pairs;
+}
+
+export function getMatchSlotLabel(match: DerivedMatch, slot: "a" | "b"): string {
+  const participant = slot === "a" ? match.a : match.b;
+  if (participant) return participant.name;
+  const ready = slot === "a" ? match.aReady : match.bReady;
+  return ready ? "BYE" : "TBD";
 }
 
 export function deriveSingleElimination(firstRound: Pair[], selectedWinners: WinnerMap): DerivedMatch[][] {
@@ -73,17 +95,23 @@ export function deriveSingleElimination(firstRound: Pair[], selectedWinners: Win
 
     for (let index = 0; index < matchCount; index += 1) {
       const id = `r${round}m${index}`;
-      const a = round === 0 ? firstRound[index]?.[0] ?? null : rounds[round - 1][index * 2]?.winner ?? null;
-      const b = round === 0 ? firstRound[index]?.[1] ?? null : rounds[round - 1][index * 2 + 1]?.winner ?? null;
+      const sourceA = round > 0 ? rounds[round - 1][index * 2] : null;
+      const sourceB = round > 0 ? rounds[round - 1][index * 2 + 1] : null;
+      const a = round === 0 ? firstRound[index]?.[0] ?? null : sourceA?.winner ?? null;
+      const b = round === 0 ? firstRound[index]?.[1] ?? null : sourceB?.winner ?? null;
+      const aReady = round === 0 || Boolean(sourceA?.winner);
+      const bReady = round === 0 || Boolean(sourceB?.winner);
       const selected = selectedWinners[id];
       let winner: Participant | null = null;
 
-      if (a && !b) winner = a;
-      if (!a && b) winner = b;
-      if (a && b && selected === a.id) winner = a;
-      if (a && b && selected === b.id) winner = b;
+      if (aReady && bReady) {
+        if (a && !b) winner = a;
+        if (!a && b) winner = b;
+        if (a && b && selected === a.id) winner = a;
+        if (a && b && selected === b.id) winner = b;
+      }
 
-      matches.push({ id, round, index, a, b, winner });
+      matches.push({ id, round, index, a, b, aReady, bReady, winner });
     }
 
     rounds.push(matches);
