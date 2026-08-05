@@ -10,6 +10,8 @@ type EventRow = RowDataPacket & {
   workspace_id: string;
   name: string;
   primary_host_id: string;
+  bracket_enabled: number;
+  bracket_require_check_in: number;
 };
 
 export default async function BracketToolPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
@@ -24,13 +26,16 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
 
   if (eventId) {
     const events = await query<EventRow[]>(
-      `SELECT id, workspace_id, name, primary_host_id FROM events WHERE id = ? LIMIT 1`,
+      `SELECT id, workspace_id, name, primary_host_id, bracket_enabled, bracket_require_check_in
+       FROM events WHERE id = ? LIMIT 1`,
       [eventId],
     );
     const event = events[0];
 
     if (!event) {
       accessError = "That event could not be found.";
+    } else if (!event.bracket_enabled) {
+      accessError = "The bracket tool is not enabled for this event.";
     } else {
       const role = await getWorkspaceRole(session.userId, event.workspace_id);
       const cohost = await query<(RowDataPacket & { permission_level: string })[]>(
@@ -50,9 +55,10 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
           `SELECT COALESCE(NULLIF(ep.game_identity_value, ''), u.global_name, u.username) AS display_name
            FROM event_participants ep
            INNER JOIN users u ON u.id = ep.user_id
-           WHERE ep.event_id = ? AND ep.status IN ('APPROVED', 'WAITLISTED', 'PENDING')
+           WHERE ep.event_id = ? AND ep.status = 'APPROVED'
+             AND (? = 0 OR ep.checked_in_at IS NOT NULL)
            ORDER BY ep.joined_at ASC`,
-          [eventId],
+          [eventId, event.bracket_require_check_in ? 1 : 0],
         );
         initialNames = participants.map((participant) => participant.display_name);
 
@@ -87,20 +93,16 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
         <div>
           <span className="eyebrow">{eventName ? "Shared event bracket" : "Standalone tool"}</span>
           <h1>Bracket generator</h1>
-          <p>
-            Create a single-elimination or custom three-player bracket, choose winners as matches finish,
-            save shared event drafts, and export the result as a PNG.
-          </p>
+          <p>Create a single-elimination or custom three-player bracket, choose winners as matches finish, save shared event drafts, and export the result as a PNG.</p>
         </div>
         {eventId ? <Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link> : null}
       </section>
 
-      <BracketGenerator
-        eventId={eventId}
-        initialTitle={initialTitle}
-        initialNames={initialNames}
-        initialDraft={initialDraft}
-      />
+      {eventId && initialNames.length === 0 ? (
+        <div className="error-banner">No eligible participants are ready yet. Approve signups{eventName ? " and complete any required check-in" : ""}, then return here.</div>
+      ) : null}
+
+      <BracketGenerator eventId={eventId} initialTitle={initialTitle} initialNames={initialNames} initialDraft={initialDraft} />
     </div>
   );
 }
