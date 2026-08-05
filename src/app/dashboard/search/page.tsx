@@ -12,12 +12,17 @@ type ResultRow = RowDataPacket & {
   href: string;
 };
 
-async function safeSearch(label: string, task: Promise<ResultRow[]>): Promise<ResultRow[]> {
+type SearchOutcome = {
+  items: ResultRow[];
+  failed: boolean;
+};
+
+async function safeSearch(label: string, task: Promise<ResultRow[]>): Promise<SearchOutcome> {
   try {
-    return await task;
+    return { items: await task, failed: false };
   } catch (error) {
     console.error(`Search category failed: ${label}`, error);
-    return [];
+    return { items: [], failed: true };
   }
 }
 
@@ -103,8 +108,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       )),
     ]);
 
-    partialFailure = searches.some((items) => items.length === 0) && searches.flat().length > 0;
-    results = searches.flat();
+    partialFailure = searches.some((result) => result.failed);
+    results = searches.flatMap((result) => result.items);
   }
 
   return (
