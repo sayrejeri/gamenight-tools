@@ -9,6 +9,7 @@ import { GenerateCodeForm } from "@/components/generate-code-form";
 import { LocalDateTime } from "@/components/local-date-time";
 import { WorkspaceProfileForm } from "@/components/workspace-profile-form";
 import { WorkspaceWebhookForm } from "@/components/workspace-webhook-form";
+import { WorkspaceMemberManager } from "@/components/workspace-member-manager";
 
 type WorkspaceRow = RowDataPacket & {
   id: string;
@@ -34,6 +35,18 @@ type EventRow = RowDataPacket & { id: string; name: string; game_name: string | 
 type GameRow = RowDataPacket & { id: string; platform_name: string; game_name: string; game_url: string | null; external_id: string | null; universe_id: string | null; thumbnail_url: string | null; is_primary: number };
 type TemplateRow = RowDataPacket & { id: string; name: string; configuration_json: string };
 type WebhookRow = RowDataPacket & { id: string; label: string; url_hint: string; notification_types_json: string | null; is_active: number; last_success_at: Date | null; last_error_message: string | null };
+type MemberRow = RowDataPacket & { user_id: string; role: string; status: string; discord_id: string; site_username: string | null; display_name: string; avatar_url: string | null };
+type OwnerClaimRow = RowDataPacket & { discord_id: string; created_at: Date; active_user_id: string | null };
+
+function parseNotificationTypes(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 export default async function WorkspacePage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const session = await requireSession();
@@ -55,7 +68,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
 
   const canSeeRestricted = canHost(role);
   const canEditProfile = role === "OWNER" || role === "ADMIN";
-  const [events, games, templates, webhooks] = await Promise.all([
+  const [events, games, templates, webhooks, members, ownerClaims] = await Promise.all([
     query<EventRow[]>(
       `SELECT id, name, game_name, platform_name, subgame_name, game_thumbnail_url, status, starts_at, visibility
        FROM events WHERE workspace_id = ? AND (? = 1 OR (status NOT IN ('DRAFT', 'AWAITING_APPROVAL') AND visibility IN ('SERVER', 'PUBLIC')))
@@ -77,6 +90,25 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
        FROM workspace_webhooks WHERE workspace_id = ? ORDER BY created_at DESC`,
       [workspaceId],
     ) : Promise.resolve([] as WebhookRow[]),
+    canEditProfile ? query<MemberRow[]>(
+      `SELECT wm.user_id, wm.role, wm.status, u.discord_id, u.site_username,
+              COALESCE(u.global_name, u.username) AS display_name,
+              CASE WHEN u.avatar_hash IS NULL THEN NULL
+                   ELSE CONCAT('https://cdn.discordapp.com/avatars/', u.discord_id, '/', u.avatar_hash, '.png?size=128')
+              END AS avatar_url
+       FROM workspace_members wm
+       INNER JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = ? AND wm.status <> 'REMOVED'
+       ORDER BY FIELD(wm.role, 'OWNER', 'ADMIN', 'STAFF', 'HOST', 'REFEREE', 'VIEWER'), display_name`,
+      [workspaceId],
+    ) : Promise.resolve([] as MemberRow[]),
+    canEditProfile ? query<OwnerClaimRow[]>(
+      `SELECT claim.discord_id, claim.created_at, CAST(u.id AS CHAR) AS active_user_id
+       FROM workspace_owner_claims claim
+       LEFT JOIN users u ON u.discord_id = claim.discord_id
+       WHERE claim.workspace_id = ? ORDER BY claim.created_at ASC`,
+      [workspaceId],
+    ) : Promise.resolve([] as OwnerClaimRow[]),
   ]);
 
   const templateOptions = templates.flatMap((template) => {
@@ -89,7 +121,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
       <section className="workspace-hero workspace-hero-banner" style={workspace.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(9,11,18,.95), rgba(9,11,18,.58)), url(${workspace.banner_url})` } : undefined}>
         <div className="organization-hero-main">
           {workspace.icon_url ? <img className="organization-hero-logo" src={workspace.icon_url} alt="" /> : <span className="organization-hero-logo organization-logo-fallback">{workspace.name.slice(0, 2)}</span>}
-          <div><span className="eyebrow">{role ?? "Discord server member"}</span><h1>{workspace.name}</h1><p>{workspace.description ?? "This server has not added a description yet."}</p><div className="button-row">{workspace.main_game_category ? <span className="badge">{workspace.main_game_category}</span> : null}{workspace.verification_level ? <span className="badge">✓ {workspace.verification_level.replaceAll("_", " ")}</span> : null}<span className="badge">Bot optional</span><span className="badge">Webhook supported</span>{workspace.chat_enabled ? <span className="badge">Chat enabled for next release</span> : null}</div></div>
+          <div><span className="eyebrow">{role ?? "Discord server member"}</span><h1>{workspace.name}</h1><p>{workspace.description ?? "This server has not added a description yet."}</p><div className="button-row">{workspace.main_game_category ? <span className="badge">{workspace.main_game_category}</span> : null}{workspace.verification_level ? <span className="badge">✓ {workspace.verification_level.replaceAll("_", " ")}</span> : null}<span className="badge">Bot optional</span><span className="badge">Webhook supported</span>{workspace.chat_enabled ? <span className="badge">Chat enabled for next release</span> : null}{canEditProfile ? <span className="badge">Management access</span> : null}</div></div>
         </div>
         <div className="button-row">{workspace.discord_invite_url ? <a className="button" href={workspace.discord_invite_url} target="_blank" rel="noreferrer">Join Discord</a> : null}{workspace.roblox_community_url ? <a className="button button-secondary" href={workspace.roblox_community_url} target="_blank" rel="noreferrer">{workspace.roblox_community_name ? `View ${workspace.roblox_community_name}` : "View Roblox community"}</a> : null}</div>
       </section>
@@ -100,9 +132,11 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
 
       {canHost(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Create an event</h2><p>Build a draft, preview it, then publish signups or submit it for staff approval.</p></div></div><CreateEventForm workspaceId={workspaceId} defaultTimezone={workspace.timezone} templates={templateOptions} workspaceGames={games} /></section> : null}
 
-      {canEditProfile ? <section className="panel section-stack"><div className="section-header"><div><h2>Edit server profile</h2><p>Add a full-card banner, logo, Discord invite, main category, Roblox community, and reusable games.</p></div></div><WorkspaceProfileForm workspaceId={workspaceId} initial={{ description: workspace.description ?? "", timezone: workspace.timezone, iconUrl: workspace.icon_url ?? "", bannerUrl: workspace.banner_url ?? "", discordInviteUrl: workspace.discord_invite_url ?? "", mainGameCategory: workspace.main_game_category ?? "", robloxCommunityName: workspace.roblox_community_name ?? "", robloxCommunityUrl: workspace.roblox_community_url ?? "", chatEnabled: Boolean(workspace.chat_enabled), suggestionsEnabled: Boolean(workspace.suggestions_enabled) }} savedGames={games} /></section> : null}
+      {canEditProfile ? <section className="panel section-stack"><div className="section-header"><div><h2>Edit server profile</h2><p>Server owners, server admins, and authorized platform administrators can correct branding, links, games, and community settings.</p></div></div><WorkspaceProfileForm workspaceId={workspaceId} initial={{ description: workspace.description ?? "", timezone: workspace.timezone, iconUrl: workspace.icon_url ?? "", bannerUrl: workspace.banner_url ?? "", discordInviteUrl: workspace.discord_invite_url ?? "", mainGameCategory: workspace.main_game_category ?? "", robloxCommunityName: workspace.roblox_community_name ?? "", robloxCommunityUrl: workspace.roblox_community_url ?? "", chatEnabled: Boolean(workspace.chat_enabled), suggestionsEnabled: Boolean(workspace.suggestions_enabled) }} savedGames={games} /></section> : null}
 
-      {canEditProfile ? <section className="panel section-stack"><div className="section-header"><div><h2>Discord webhooks</h2><p>Post event announcements without requiring a Discord bot. Webhooks cannot read messages, assign roles, or DM participants.</p></div></div><WorkspaceWebhookForm workspaceId={workspaceId} webhooks={webhooks.map((webhook) => ({ id: webhook.id, label: webhook.label, urlHint: webhook.url_hint, notificationTypes: webhook.notification_types_json ? JSON.parse(webhook.notification_types_json) : [], isActive: Boolean(webhook.is_active), lastSuccessAt: webhook.last_success_at ? new Date(webhook.last_success_at).toISOString() : null, lastErrorMessage: webhook.last_error_message }))} /></section> : null}
+      {canEditProfile && role ? <section className="panel section-stack"><div className="section-header"><div><h2>Server owners and staff</h2><p>Add owners by numeric Discord ID, or assign existing website users by site username, Discord username, or Discord ID.</p></div></div><WorkspaceMemberManager workspaceId={workspaceId} actorRole={role} members={members.map((member) => ({ userId: member.user_id, displayName: member.display_name, siteUsername: member.site_username, discordId: member.discord_id, role: member.role, status: member.status, avatarUrl: member.avatar_url }))} ownerClaims={ownerClaims.map((claim) => ({ discordId: claim.discord_id, createdAt: new Date(claim.created_at).toISOString(), activeUserId: claim.active_user_id }))} /></section> : null}
+
+      {canEditProfile ? <section className="panel section-stack"><div className="section-header"><div><h2>Discord webhooks</h2><p>Post event announcements without requiring a Discord bot. Webhooks cannot read messages, assign roles, or DM participants.</p></div></div><WorkspaceWebhookForm workspaceId={workspaceId} webhooks={webhooks.map((webhook) => ({ id: webhook.id, label: webhook.label, urlHint: webhook.url_hint, notificationTypes: parseNotificationTypes(webhook.notification_types_json), isActive: Boolean(webhook.is_active), lastSuccessAt: webhook.last_success_at ? new Date(webhook.last_success_at).toISOString() : null, lastErrorMessage: webhook.last_error_message }))} /></section> : null}
 
       {canManageCodes(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Generate access codes</h2><p>Choose permanent, temporary, one-time, or limited-use access by setting expiration and maximum uses.</p></div></div><GenerateCodeForm workspaceId={workspaceId} events={events.map(({ id, name }) => ({ id, name }))} /></section> : null}
     </div>
