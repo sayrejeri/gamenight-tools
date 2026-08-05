@@ -1,0 +1,115 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { formatConnectionType } from "@/lib/connections";
+
+type ConnectionOption = {
+  id: string;
+  connection_type: string;
+  handle: string;
+  display_name: string | null;
+};
+
+export function EventSignupControls({
+  eventId,
+  eventStatus,
+  participantStatus,
+  checkedIn,
+  joinCodeRequired,
+  requiredConnectionType,
+  connections,
+}: {
+  eventId: string;
+  eventStatus: string;
+  participantStatus: string | null;
+  checkedIn: boolean;
+  joinCodeRequired: boolean;
+  requiredConnectionType: string | null;
+  connections: ConnectionOption[];
+}) {
+  const router = useRouter();
+  const matchingConnections = requiredConnectionType
+    ? connections.filter((connection) => connection.connection_type.toLowerCase() === requiredConnectionType.toLowerCase())
+    : connections;
+  const [connectionId, setConnectionId] = useState(matchingConnections[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function run(action: "SIGN_UP" | "CHECK_IN" | "WITHDRAW") {
+    if (action === "WITHDRAW" && !window.confirm("Withdraw from this event?")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, connectionId: connectionId || null }),
+      });
+      const body = await response.json() as { error?: string; status?: string; checkedIn?: boolean };
+      if (!response.ok) throw new Error(body.error ?? "Your event signup could not be updated.");
+      setMessage(action === "CHECK_IN"
+        ? "You are checked in."
+        : action === "WITHDRAW"
+          ? "You withdrew from the event."
+          : body.status === "WAITLISTED"
+            ? "The event is full, so you were added to the waitlist."
+            : "You are signed up.");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Your event signup could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const activeParticipant = participantStatus && !["WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus);
+
+  return (
+    <div className="form-stack">
+      {requiredConnectionType ? (
+        <div className="form-stack compact">
+          <label htmlFor="signup-connection">{formatConnectionType(requiredConnectionType)} account used for this event</label>
+          {matchingConnections.length ? (
+            <select id="signup-connection" value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
+              {matchingConnections.map((connection) => (
+                <option value={connection.id} key={connection.id}>
+                  {connection.display_name ?? connection.handle} (@{connection.handle})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="error-banner">Add a visible {formatConnectionType(requiredConnectionType)} identity on your profile first.</p>
+          )}
+        </div>
+      ) : null}
+
+      {eventStatus === "SIGNUPS_OPEN" && !activeParticipant ? (
+        <button
+          className="button"
+          type="button"
+          disabled={busy || (Boolean(requiredConnectionType) && !matchingConnections.length)}
+          onClick={() => run("SIGN_UP")}
+        >
+          {busy ? "Updating…" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
+        </button>
+      ) : null}
+
+      {eventStatus === "CHECK_IN_OPEN" && activeParticipant && !checkedIn ? (
+        <button className="button" type="button" disabled={busy} onClick={() => run("CHECK_IN")}>
+          {busy ? "Checking in…" : "Check in now"}
+        </button>
+      ) : null}
+
+      {activeParticipant ? (
+        <div className="button-row">
+          <span className="badge">Signup: {participantStatus?.replaceAll("_", " ")}</span>
+          {checkedIn ? <span className="badge">Checked in</span> : null}
+          <button className="button button-danger" type="button" disabled={busy} onClick={() => run("WITHDRAW")}>Withdraw</button>
+        </div>
+      ) : null}
+
+      {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
+    </div>
+  );
+}
