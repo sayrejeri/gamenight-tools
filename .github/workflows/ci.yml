@@ -35,7 +35,7 @@ jobs:
           cp package.json deploy/package.json
           cp VERSION deploy/VERSION
           cp DEPLOYMENT-v0.3.md deploy/DEPLOYMENT-v0.3.md
-          cp database/003_community_foundation.sql deploy/database/003_community_foundation.sql
+          cat database/003_community_foundation.sql database/003_community_foundation_finalize.sql > deploy/database/003_community_foundation.sql
           cp -a .next deploy/.next
           rm -rf deploy/.next/cache deploy/.next/types deploy/.next/diagnostics
           if [ -d public ]; then cp -a public deploy/public; fi
