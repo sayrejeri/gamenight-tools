@@ -4,9 +4,11 @@ export type EventStatus =
   | "DRAFT"
   | "AWAITING_APPROVAL"
   | "SIGNUPS_OPEN"
+  | "SIGNUPS_CLOSED"
   | "CHECK_IN_OPEN"
   | "LIVE"
   | "COMPLETED"
+  | "POSTPONED"
   | "CANCELLED";
 
 export type EventVisibility = "SERVER" | "CODE_ONLY" | "UNLISTED" | "PUBLIC" | "STAFF_ONLY";

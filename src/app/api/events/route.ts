@@ -4,20 +4,35 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { canHost, getWorkspaceRole } from "@/lib/access";
-import { getPool, query } from "@/lib/db";
+import { query, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
+
+const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
 
 const createEventSchema = z.object({
   workspaceId: z.string().uuid(),
   name: z.string().trim().min(2).max(160),
-  gameName: z.string().trim().max(160).nullable().optional(),
+  platformName: z.string().trim().max(80).nullable().optional(),
+  subgameName: z.string().trim().max(191).nullable().optional(),
+  gameUrl: optionalUrl,
+  gameExternalId: z.string().trim().max(80).nullable().optional(),
+  gameUniverseId: z.string().trim().max(80).nullable().optional(),
+  gameThumbnailUrl: optionalUrl,
+  requiredConnectionType: z.string().trim().max(50).nullable().optional(),
   description: z.string().trim().max(5000).nullable().optional(),
   startsAt: z.string().datetime().nullable().optional(),
   signupDeadline: z.string().datetime().nullable().optional(),
-  maxParticipants: z.number().int().min(2).max(10000).nullable().optional(),
+  checkInOpensAt: z.string().datetime().nullable().optional(),
+  checkInDeadline: z.string().datetime().nullable().optional(),
+  maxParticipants: z.number().int().min(0).max(10000).nullable().optional(),
   visibility: z.enum(["SERVER", "CODE_ONLY", "UNLISTED", "PUBLIC", "STAFF_ONLY"]).default("SERVER"),
   joinCodeRequired: z.boolean().default(true),
   timezone: z.string().trim().min(2).max(100).default("America/Detroit"),
+  bracketEnabled: z.boolean().default(false),
+  bracketFormat: z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER"]).nullable().optional(),
+  bracketSeedingMode: z.enum(["RANDOM", "MANUAL"]).nullable().optional(),
+  bracketAutoGenerate: z.boolean().default(false),
+  bracketRequireCheckIn: z.boolean().default(false),
 });
 
 type EventRow = RowDataPacket & {
@@ -26,6 +41,9 @@ type EventRow = RowDataPacket & {
   workspace_name: string;
   name: string;
   game_name: string | null;
+  platform_name: string | null;
+  subgame_name: string | null;
+  game_thumbnail_url: string | null;
   status: string;
   visibility: string;
   starts_at: Date | null;
@@ -37,6 +55,7 @@ export async function GET() {
 
   const events = await query<EventRow[]>(
     `SELECT e.id, e.workspace_id, w.name AS workspace_name, e.name, e.game_name,
+            e.platform_name, e.subgame_name, e.game_thumbnail_url,
             e.status, e.visibility, e.starts_at
      FROM events e
      INNER JOIN workspaces w ON w.id = e.workspace_id
@@ -72,35 +91,71 @@ export async function POST(request: NextRequest) {
     `SELECT default_staff_approval_required AS approval_required FROM workspaces WHERE id = ? LIMIT 1`,
     [parsed.data.workspaceId],
   );
+  if (!workspace) return NextResponse.json({ error: "Server profile not found." }, { status: 404 });
 
-  const approvalRequired = role === "HOST" && Boolean(workspace?.approval_required);
   const eventId = randomUUID();
-  const initialStatus = approvalRequired ? "AWAITING_APPROVAL" : "DRAFT";
+  const approvalRequired = role === "HOST" && Boolean(workspace.approval_required);
+  const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0
+    ? parsed.data.maxParticipants
+    : null;
+  const bracketFormat = parsed.data.bracketEnabled
+    ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION"
+    : null;
+  const seedingMode = parsed.data.bracketEnabled
+    ? parsed.data.bracketSeedingMode ?? "RANDOM"
+    : null;
+  const gameName = parsed.data.subgameName || parsed.data.platformName || null;
 
-  await getPool().execute(
-    `INSERT INTO events
-      (id, workspace_id, name, description, game_name, status, visibility, join_code_required,
-       starts_at, signup_deadline, max_participants, timezone, staff_approval_required,
-       created_by, primary_host_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      eventId,
-      parsed.data.workspaceId,
-      parsed.data.name,
-      parsed.data.description ?? null,
-      parsed.data.gameName ?? null,
-      initialStatus,
-      parsed.data.visibility,
-      parsed.data.joinCodeRequired ? 1 : 0,
-      parsed.data.startsAt ? new Date(parsed.data.startsAt) : null,
-      parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null,
-      parsed.data.maxParticipants ?? null,
-      parsed.data.timezone,
-      approvalRequired ? 1 : 0,
-      session.userId,
-      session.userId,
-    ],
-  );
+  await withTransaction(async (connection) => {
+    await connection.execute(
+      `INSERT INTO events
+        (id, workspace_id, name, description, game_name, platform_name, subgame_name,
+         game_url, game_external_id, game_universe_id, game_thumbnail_url, required_connection_type,
+         status, visibility, join_code_required, starts_at, signup_deadline,
+         check_in_opens_at, check_in_deadline, max_participants, timezone,
+         bracket_enabled, bracket_format, bracket_seeding_mode, bracket_auto_generate,
+         bracket_require_check_in, staff_approval_required, created_by, primary_host_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        eventId,
+        parsed.data.workspaceId,
+        parsed.data.name,
+        parsed.data.description ?? null,
+        gameName,
+        parsed.data.platformName ?? null,
+        parsed.data.subgameName ?? null,
+        parsed.data.gameUrl || null,
+        parsed.data.gameExternalId ?? null,
+        parsed.data.gameUniverseId ?? null,
+        parsed.data.gameThumbnailUrl || null,
+        parsed.data.requiredConnectionType ?? null,
+        parsed.data.visibility,
+        parsed.data.joinCodeRequired ? 1 : 0,
+        parsed.data.startsAt ? new Date(parsed.data.startsAt) : null,
+        parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null,
+        parsed.data.checkInOpensAt ? new Date(parsed.data.checkInOpensAt) : null,
+        parsed.data.checkInDeadline ? new Date(parsed.data.checkInDeadline) : null,
+        maximum,
+        parsed.data.timezone,
+        parsed.data.bracketEnabled ? 1 : 0,
+        bracketFormat,
+        seedingMode,
+        parsed.data.bracketAutoGenerate ? 1 : 0,
+        parsed.data.bracketRequireCheckIn ? 1 : 0,
+        approvalRequired ? 1 : 0,
+        session.userId,
+        session.userId,
+      ],
+    );
+
+    if (parsed.data.bracketEnabled && bracketFormat && seedingMode) {
+      await connection.execute(
+        `INSERT INTO brackets (id, event_id, format, status, seeding_mode)
+         VALUES (?, ?, ?, 'DRAFT', ?)`,
+        [randomUUID(), eventId, bracketFormat, seedingMode],
+      );
+    }
+  });
 
   await writeAuditLog({
     actorUserId: session.userId,
@@ -109,8 +164,14 @@ export async function POST(request: NextRequest) {
     action: "event.created",
     targetType: "event",
     targetId: eventId,
-    details: { initialStatus, visibility: parsed.data.visibility },
+    details: {
+      initialStatus: "DRAFT",
+      approvalRequired,
+      visibility: parsed.data.visibility,
+      platformName: parsed.data.platformName,
+      bracketEnabled: parsed.data.bracketEnabled,
+    },
   });
 
-  return NextResponse.json({ eventId, status: initialStatus }, { status: 201 });
+  return NextResponse.json({ eventId, status: "DRAFT", approvalRequired }, { status: 201 });
 }

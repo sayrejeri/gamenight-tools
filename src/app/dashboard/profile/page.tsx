@@ -7,8 +7,11 @@ type ConnectionRow = RowDataPacket & {
   id: string;
   source: "DISCORD" | "MANUAL";
   connection_type: string;
+  external_id: string | null;
   handle: string;
   display_name: string | null;
+  profile_url: string | null;
+  avatar_url: string | null;
   is_verified: number;
   is_visible: number;
 };
@@ -16,7 +19,8 @@ type ConnectionRow = RowDataPacket & {
 export default async function ProfilePage() {
   const session = await requireSession();
   const connections = await query<ConnectionRow[]>(
-    `SELECT id, source, connection_type, handle, display_name, is_verified, is_visible
+    `SELECT id, source, connection_type, external_id, handle, display_name,
+            profile_url, avatar_url, is_verified, is_visible
      FROM user_connections WHERE user_id = ?
      ORDER BY source ASC, connection_type ASC`,
     [session.userId],
