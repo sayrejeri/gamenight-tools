@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 type Webhook = { id: string; label: string; urlHint: string; notificationTypes: string[]; isActive: boolean; lastSuccessAt: string | null; lastErrorMessage: string | null };
 const notificationOptions = [
-  ["EVENT_PUBLISHED", "Event published"], ["SIGNUPS_CLOSED", "Signups closed"], ["CHECK_IN_OPEN", "Check-in opened"], ["EVENT_LIVE", "Event started"], ["EVENT_COMPLETED", "Event completed"], ["EVENT_CANCELLED", "Event cancelled"], ["BRACKET_PUBLISHED", "Bracket published"], ["SUGGESTION_UPDATE", "Suggestion update"],
+  ["EVENT_PUBLISHED", "Event published"], ["SIGNUPS_CLOSED", "Signups closed"], ["CHECK_IN_OPEN", "Check-in opened"], ["EVENT_LIVE", "Event started"], ["EVENT_COMPLETED", "Event completed"], ["EVENT_CANCELLED", "Event cancelled"], ["BRACKET_PUBLISHED", "Bracket published"],
 ] as const;
 
 export function WorkspaceWebhookForm({ workspaceId, webhooks }: { workspaceId: string; webhooks: Webhook[] }) {
