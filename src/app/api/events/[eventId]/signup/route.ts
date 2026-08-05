@@ -50,9 +50,13 @@ export async function POST(
     `SELECT status, checked_in_at FROM event_participants WHERE event_id = ? AND user_id = ? LIMIT 1`,
     [eventId, session.userId],
   );
+  const existingParticipant = existing[0] ?? null;
 
   if (parsed.data.action === "WITHDRAW") {
-    if (!existing[0]) return NextResponse.json({ error: "You are not signed up for this event." }, { status: 409 });
+    if (!existingParticipant || ["WITHDRAWN", "REJECTED"].includes(existingParticipant.status)) {
+      return NextResponse.json({ error: "You are not actively signed up for this event." }, { status: 409 });
+    }
+
     await withTransaction(async (connection) => {
       await connection.execute(
         `UPDATE event_participants SET status = 'WITHDRAWN', checked_in_at = NULL
@@ -60,7 +64,7 @@ export async function POST(
         [eventId, session.userId],
       );
 
-      if (event.max_participants) {
+      if (event.max_participants && existingParticipant.status === "APPROVED") {
         const [waitlist] = await connection.query<(RowDataPacket & { user_id: string })[]>(
           `SELECT user_id FROM event_participants
            WHERE event_id = ? AND status = 'WAITLISTED'
@@ -80,7 +84,7 @@ export async function POST(
   }
 
   if (parsed.data.action === "CHECK_IN") {
-    if (!existing[0] || !["APPROVED", "PENDING"].includes(existing[0].status)) {
+    if (!existingParticipant || existingParticipant.status !== "APPROVED") {
       return NextResponse.json({ error: "You must be approved before checking in." }, { status: 409 });
     }
     if (event.status !== "CHECK_IN_OPEN") {
@@ -97,11 +101,11 @@ export async function POST(
     await withTransaction(async (connection) => {
       await connection.execute(
         `UPDATE event_participants SET checked_in_at = CURRENT_TIMESTAMP(3)
-         WHERE event_id = ? AND user_id = ?`,
+         WHERE event_id = ? AND user_id = ? AND status = 'APPROVED'`,
         [eventId, session.userId],
       );
     });
-    return NextResponse.json({ status: existing[0].status, checkedIn: true });
+    return NextResponse.json({ status: existingParticipant.status, checkedIn: true });
   }
 
   if (event.status !== "SIGNUPS_OPEN") {
@@ -110,7 +114,7 @@ export async function POST(
   if (event.signup_deadline && new Date(event.signup_deadline).getTime() <= Date.now()) {
     return NextResponse.json({ error: "The signup deadline has passed." }, { status: 409 });
   }
-  if (event.join_code_required && !existing[0]) {
+  if (event.join_code_required && !existingParticipant) {
     return NextResponse.json({ error: "Redeem the event join code before completing your signup." }, { status: 403 });
   }
 
@@ -135,13 +139,17 @@ export async function POST(
   }
 
   const result = await withTransaction(async (connection) => {
-    const [countRows] = await connection.query<(RowDataPacket & { total: number })[]>(
-      `SELECT COUNT(*) AS total FROM event_participants
-       WHERE event_id = ? AND status = 'APPROVED' FOR UPDATE`,
+    const [lockedEvents] = await connection.query<(RowDataPacket & { max_participants: number | null })[]>(
+      `SELECT max_participants FROM events WHERE id = ? LIMIT 1 FOR UPDATE`,
       [eventId],
     );
-    const approvedCount = Number(countRows[0]?.total ?? 0);
-    const status = event.max_participants && approvedCount >= event.max_participants
+    const currentMaximum = lockedEvents[0]?.max_participants ?? null;
+    const [approvedRows] = await connection.query<(RowDataPacket & { user_id: string })[]>(
+      `SELECT user_id FROM event_participants
+       WHERE event_id = ? AND status = 'APPROVED'`,
+      [eventId],
+    );
+    const status = currentMaximum && approvedRows.length >= currentMaximum
       ? "WAITLISTED"
       : "APPROVED";
 
