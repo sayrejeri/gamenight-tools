@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatConnectionType } from "@/lib/connections";
 
@@ -35,6 +35,22 @@ export function EventSignupControls({
   const [connectionId, setConnectionId] = useState(matchingConnections[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function syncDeadline() {
+      try {
+        const response = await fetch(`/api/events/${eventId}/sync`, { method: "POST" });
+        const body = await response.json() as { changed?: boolean };
+        if (active && response.ok && body.changed) router.refresh();
+      } catch {
+        // A later poll or refresh can retry.
+      }
+    }
+    void syncDeadline();
+    const timer = window.setInterval(syncDeadline, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [eventId, router]);
 
   async function run(action: "SIGN_UP" | "CHECK_IN" | "WITHDRAW") {
     if (action === "WITHDRAW" && !window.confirm("Withdraw from this event?")) return;
@@ -73,32 +89,21 @@ export function EventSignupControls({
           {matchingConnections.length ? (
             <select id="signup-connection" value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
               {matchingConnections.map((connection) => (
-                <option value={connection.id} key={connection.id}>
-                  {connection.display_name ?? connection.handle} (@{connection.handle})
-                </option>
+                <option value={connection.id} key={connection.id}>{connection.display_name ?? connection.handle} (@{connection.handle})</option>
               ))}
             </select>
-          ) : (
-            <p className="error-banner">Add a visible {formatConnectionType(requiredConnectionType)} identity on your profile first.</p>
-          )}
+          ) : <p className="error-banner">Add a visible {formatConnectionType(requiredConnectionType)} identity on your profile first.</p>}
         </div>
       ) : null}
 
       {eventStatus === "SIGNUPS_OPEN" && !activeParticipant ? (
-        <button
-          className="button"
-          type="button"
-          disabled={busy || (Boolean(requiredConnectionType) && !matchingConnections.length)}
-          onClick={() => run("SIGN_UP")}
-        >
+        <button className="button" type="button" disabled={busy || (Boolean(requiredConnectionType) && !matchingConnections.length)} onClick={() => run("SIGN_UP")}>
           {busy ? "Updating…" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
         </button>
       ) : null}
 
       {eventStatus === "CHECK_IN_OPEN" && activeParticipant && !checkedIn ? (
-        <button className="button" type="button" disabled={busy} onClick={() => run("CHECK_IN")}>
-          {busy ? "Checking in…" : "Check in now"}
-        </button>
+        <button className="button" type="button" disabled={busy} onClick={() => run("CHECK_IN")}>{busy ? "Checking in…" : "Check in now"}</button>
       ) : null}
 
       {activeParticipant ? (
