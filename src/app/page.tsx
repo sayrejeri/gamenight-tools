@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { readSession } from "@/lib/auth";
+import { BrandMark } from "@/components/brand-mark";
 
 export const dynamic = "force-dynamic";
 
@@ -10,72 +11,41 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   return (
     <main className="landing-shell">
       <nav className="topbar">
-        <Link className="brand" href="/">Game Night Tools</Link>
-        {session ? (
-          <Link className="button" href="/dashboard">Open dashboard</Link>
-        ) : (
-          <a className="button" href="/api/auth/discord/login">Continue with Discord</a>
-        )}
+        <BrandMark href="/" />
+        {session ? <Link className="button" href="/dashboard">Open dashboard</Link> : <a className="button" href="/api/auth/discord/login">Continue with Discord</a>}
       </nav>
 
       <section className="hero">
         <div>
-          <span className="eyebrow">gamenights.sayrejeri.com</span>
-          <h1>Run organized game nights without forcing every server to install a bot.</h1>
+          <span className="eyebrow">Events · Teams · Communities</span>
+          <h1>Everything your game-night community needs, without requiring a Discord bot.</h1>
           <p>
-            Create server workspaces, approve hosts, share limited-use codes, invite co-hosts,
-            collect signups, and prepare brackets from one Discord-authenticated dashboard.
+            Create approved server and team profiles, publish events, collect signups, manage participants,
+            build brackets, connect Discord webhooks, share suggestions, and keep every action tied to a Discord-authenticated user.
           </p>
           <div className="button-row">
-            {session ? (
-              <Link className="button button-large" href="/dashboard">Go to your dashboard</Link>
-            ) : (
-              <a className="button button-large" href="/api/auth/discord/login">Sign in with Discord</a>
-            )}
-            <a className="button button-secondary button-large" href="#foundation">See what is included</a>
+            {session ? <Link className="button button-large" href="/dashboard">Go to your dashboard</Link> : <a className="button button-large" href="/api/auth/discord/login">Sign in with Discord</a>}
+            <a className="button button-secondary button-large" href="#foundation">Explore the platform</a>
           </div>
           {params.authError ? <p className="error-banner">Discord login failed. Please try again.</p> : null}
         </div>
         <div className="hero-panel">
           <div className="status-line"><span>Discord login</span><strong>Required</strong></div>
-          <div className="status-line"><span>Discord bot</span><strong>Optional</strong></div>
-          <div className="status-line"><span>Server workspaces</span><strong>Shared</strong></div>
-          <div className="status-line"><span>Host access</span><strong>Staff approved</strong></div>
-          <div className="status-line"><span>Codes</span><strong>One-time or limited</strong></div>
+          <div className="status-line"><span>Discord bot</span><strong>Not required</strong></div>
+          <div className="status-line"><span>Discord webhooks</span><strong>Supported</strong></div>
+          <div className="status-line"><span>User profiles</span><strong>Discord connected</strong></div>
+          <div className="status-line"><span>Server and team profiles</span><strong>Staff approved</strong></div>
+          <div className="status-line"><span>Event times</span><strong>Viewer local</strong></div>
         </div>
       </section>
 
       <section id="foundation" className="feature-grid">
-        <article className="card">
-          <span className="card-kicker">Server workspaces</span>
-          <h2>Keep each Discord community separate</h2>
-          <p>Owners, staff, approved hosts, events, participant history, and settings belong to one server profile.</p>
-        </article>
-        <article className="card">
-          <span className="card-kicker">Controlled access</span>
-          <h2>Choose exactly who can host</h2>
-          <p>Staff, host, and event codes can expire, work once, or allow a selected number of redemptions.</p>
-        </article>
-        <article className="card">
-          <span className="card-kicker">Co-hosting</span>
-          <h2>Invite help without sharing accounts</h2>
-          <p>Co-hosts accept invitations and receive full or limited event permissions. Every change remains attributed.</p>
-        </article>
-        <article className="card">
-          <span className="card-kicker">Discord-aware</span>
-          <h2>Show events from connected servers</h2>
-          <p>The login checks a user&apos;s server list and displays matching events without requiring a bot installation.</p>
-        </article>
-        <article className="card">
-          <span className="card-kicker">Profiles</span>
-          <h2>Import game connections</h2>
-          <p>Discord connections can be imported, edited, hidden, or replaced with manually entered game identities.</p>
-        </article>
-        <article className="card">
-          <span className="card-kicker">Tournament foundation</span>
-          <h2>Ready for signups and brackets</h2>
-          <p>The database foundation includes participants, three-player matches, single elimination, reminders, and audit logs.</p>
-        </article>
+        <article className="card"><span className="card-kicker">Events</span><h2>From draft to final result</h2><p>Publish signups, manage waitlists and check-in, require game identities, prepare brackets, and display times correctly for every viewer.</p></article>
+        <article className="card"><span className="card-kicker">Community profiles</span><h2>Give every server a real home</h2><p>Approved server profiles support full-card banners, logos, Discord invites, Roblox communities, saved games, staff roles, and events.</p></article>
+        <article className="card"><span className="card-kicker">Teams</span><h2>Build competitive rosters</h2><p>Team profiles include owners, managers, captains, players, substitutes, recruiting settings, applications, and linked player profiles.</p></article>
+        <article className="card"><span className="card-kicker">Discord integration</span><h2>Post updates without installing a bot</h2><p>Owners can connect encrypted Discord webhooks for event, bracket, check-in, and result announcements. A bot remains optional for future advanced features.</p></article>
+        <article className="card"><span className="card-kicker">Suggestions</span><h2>Let the community shape updates</h2><p>Members can submit ideas, upvote or downvote, comment, and follow each suggestion from review to planned, development, and release.</p></article>
+        <article className="card"><span className="card-kicker">Tools</span><h2>Keep useful host utilities together</h2><p>Build brackets, random teams, quick matchups, map picks, Discord announcements, and local-time countdowns from one tools hub.</p></article>
       </section>
     </main>
   );

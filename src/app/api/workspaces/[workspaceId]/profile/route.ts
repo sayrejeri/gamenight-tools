@@ -20,10 +20,14 @@ const gameSchema = z.object({
 const profileSchema = z.object({
   description: z.string().trim().max(2000).nullable().optional(),
   timezone: z.string().trim().min(2).max(100),
+  iconUrl: nullableUrl,
+  bannerUrl: nullableUrl,
   discordInviteUrl: nullableUrl,
   mainGameCategory: z.string().trim().max(80).nullable().optional(),
   robloxCommunityName: z.string().trim().max(191).nullable().optional(),
   robloxCommunityUrl: nullableUrl,
+  chatEnabled: z.boolean().default(false),
+  suggestionsEnabled: z.boolean().default(true),
   games: z.array(gameSchema).max(20).default([]),
 });
 
@@ -52,16 +56,21 @@ export async function PATCH(
   await withTransaction(async (connection) => {
     await connection.execute(
       `UPDATE workspaces
-       SET description = ?, timezone = ?, discord_invite_url = ?, main_game_category = ?,
-           roblox_community_name = ?, roblox_community_url = ?, updated_at = CURRENT_TIMESTAMP(3)
+       SET description = ?, timezone = ?, icon_url = ?, banner_url = ?, discord_invite_url = ?,
+           main_game_category = ?, roblox_community_name = ?, roblox_community_url = ?,
+           chat_enabled = ?, suggestions_enabled = ?, updated_at = CURRENT_TIMESTAMP(3)
        WHERE id = ?`,
       [
         parsed.data.description || null,
         parsed.data.timezone,
+        parsed.data.iconUrl || null,
+        parsed.data.bannerUrl || null,
         parsed.data.discordInviteUrl || null,
         parsed.data.mainGameCategory || null,
         parsed.data.robloxCommunityName || null,
         parsed.data.robloxCommunityUrl || null,
+        parsed.data.chatEnabled ? 1 : 0,
+        parsed.data.suggestionsEnabled ? 1 : 0,
         workspaceId,
       ],
     );

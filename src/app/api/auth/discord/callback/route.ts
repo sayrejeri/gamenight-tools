@@ -6,11 +6,12 @@ import { createSessionToken, sessionCookieOptions } from "@/lib/auth";
 import { withTransaction } from "@/lib/db";
 import { exchangeDiscordCode, fetchDiscordProfile } from "@/lib/discord";
 import { buildConnectionProfileUrl } from "@/lib/connections";
+import { reserveUniqueSiteUsername } from "@/lib/profile";
 import { resolveRobloxUser } from "@/lib/roblox";
 
 export const dynamic = "force-dynamic";
 
-type UserIdRow = RowDataPacket & { id: string };
+type UserIdRow = RowDataPacket & { id: string; site_username: string | null };
 type LoginStage = "discord_token" | "discord_profile" | "database" | "session";
 
 type EnrichedConnection = {
@@ -85,33 +86,47 @@ export async function GET(request: NextRequest) {
     const enrichedConnections = await Promise.all(connections.map(enrichDiscordConnection));
 
     stage = "database";
-    const userId = await withTransaction(async (connection) => {
+    const { userId, needsOnboarding } = await withTransaction(async (connection) => {
       await connection.execute<ResultSetHeader>(
-        `INSERT INTO users (discord_id, username, global_name, avatar_hash, last_login_at)
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(3))
+        `INSERT INTO users (discord_id, username, global_name, avatar_hash, last_login_at, last_seen_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
          ON DUPLICATE KEY UPDATE
            username = VALUES(username),
            global_name = VALUES(global_name),
            avatar_hash = VALUES(avatar_hash),
-           last_login_at = CURRENT_TIMESTAMP(3)`,
+           last_login_at = CURRENT_TIMESTAMP(3),
+           last_seen_at = CURRENT_TIMESTAMP(3)`,
         [user.id, user.username, user.global_name ?? null, user.avatar ?? null],
       );
 
       const [userRows] = await connection.query<UserIdRow[]>(
-        `SELECT id FROM users WHERE discord_id = ? LIMIT 1`,
+        `SELECT id, site_username FROM users WHERE discord_id = ? LIMIT 1`,
         [user.id],
       );
-      const currentUserId = userRows[0]?.id;
-      if (!currentUserId) throw new Error("User record could not be loaded after login.");
+      const currentUser = userRows[0];
+      if (!currentUser) throw new Error("User record could not be loaded after login.");
 
-      await connection.execute(`DELETE FROM user_guilds WHERE user_id = ?`, [currentUserId]);
+      let siteUsername = currentUser.site_username;
+      if (!siteUsername) {
+        siteUsername = await reserveUniqueSiteUsername(connection, user.username, user.id);
+        await connection.execute(`UPDATE users SET site_username = ? WHERE id = ?`, [siteUsername, currentUser.id]);
+      }
+
+      await connection.execute(
+        `INSERT INTO user_preferences (user_id, timezone)
+         VALUES (?, NULL)
+         ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`,
+        [currentUser.id],
+      );
+
+      await connection.execute(`DELETE FROM user_guilds WHERE user_id = ?`, [currentUser.id]);
       for (const guild of guilds) {
         await connection.execute(
           `INSERT INTO user_guilds
             (user_id, guild_id, guild_name, icon_hash, is_owner, permissions_value, synced_at)
            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))`,
           [
-            currentUserId,
+            currentUser.id,
             guild.id,
             guild.name,
             guild.icon ?? null,
@@ -128,7 +143,7 @@ export async function GET(request: NextRequest) {
              AND (external_id IN (?, ?) OR LOWER(handle) = LOWER(?))
            LIMIT 1`,
           [
-            currentUserId,
+            currentUser.id,
             connectionItem.type,
             connectionItem.externalId,
             connectionItem.originalExternalId,
@@ -160,7 +175,7 @@ export async function GET(request: NextRequest) {
              VALUES (?, ?, 'DISCORD', ?, ?, ?, ?, ?, ?, ?, 1)`,
             [
               randomUUID(),
-              currentUserId,
+              currentUser.id,
               connectionItem.type,
               connectionItem.externalId,
               connectionItem.handle,
@@ -179,17 +194,25 @@ export async function GET(request: NextRequest) {
          FROM workspace_owner_claims claim
          WHERE claim.discord_id = ?
          ON DUPLICATE KEY UPDATE role = 'OWNER', status = 'ACTIVE'`,
-        [currentUserId, user.id],
+        [currentUser.id, user.id],
       );
 
       await connection.execute(
         `UPDATE event_cohosts
          SET invited_user_id = ?
          WHERE invited_discord_id = ? AND invited_user_id IS NULL`,
-        [currentUserId, user.id],
+        [currentUser.id, user.id],
       );
 
-      return currentUserId;
+      const [onboardingRows] = await connection.query<(RowDataPacket & { onboarding_completed: number })[]>(
+        `SELECT onboarding_completed FROM users WHERE id = ? LIMIT 1`,
+        [currentUser.id],
+      );
+
+      return {
+        userId: currentUser.id,
+        needsOnboarding: !Boolean(onboardingRows[0]?.onboarding_completed),
+      };
     });
 
     stage = "session";
@@ -201,7 +224,7 @@ export async function GET(request: NextRequest) {
       avatarHash: user.avatar ?? null,
     });
 
-    const response = NextResponse.redirect(appUrl("/dashboard", request));
+    const response = NextResponse.redirect(appUrl(needsOnboarding ? "/dashboard/onboarding" : "/dashboard", request));
     const options = sessionCookieOptions();
     response.cookies.set(options.name, token, options);
     response.cookies.delete("discord_oauth_state");

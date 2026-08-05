@@ -1,0 +1,17 @@
+{
+  "name": "Game Night Tools",
+  "short_name": "GNT",
+  "description": "Discord-powered game night events, teams, profiles, suggestions, and community tools.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#090b12",
+  "theme_color": "#7c5cff",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
