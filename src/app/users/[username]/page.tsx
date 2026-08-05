@@ -29,7 +29,7 @@ type UserRow = RowDataPacket & {
 type ConnectionRow = RowDataPacket & { connection_type: string; external_id: string | null; handle: string; display_name: string | null; profile_url: string | null; avatar_url: string | null; is_verified: number };
 type TeamRow = RowDataPacket & { id: string; slug: string; name: string; tag: string | null; logo_url: string | null; role: string };
 type WorkspaceRow = RowDataPacket & { id: string; name: string; icon_url: string | null; banner_url: string | null; role: string };
-type EventRow = RowDataPacket & { id: string; name: string; status: string; starts_at: Date | null; workspace_name: string; placement: string | null };
+type EventRow = RowDataPacket & { id: string; name: string; status: string; starts_at: Date | null; workspace_name: string };
 
 export const dynamic = "force-dynamic";
 
@@ -85,14 +85,10 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
       [user.id],
     ) : Promise.resolve([] as WorkspaceRow[]),
     user.show_event_history || isOwner ? query<EventRow[]>(
-      `SELECT e.id, e.name, e.status, e.starts_at, w.name AS workspace_name,
-              JSON_UNQUOTE(JSON_EXTRACT(ep_answers.answers_json, '$.placement')) AS placement
+      `SELECT e.id, e.name, e.status, e.starts_at, w.name AS workspace_name
        FROM event_participants ep
        INNER JOIN events e ON e.id = ep.event_id
        INNER JOIN workspaces w ON w.id = e.workspace_id
-       LEFT JOIN (
-         SELECT event_id, user_id, NULL AS answers_json FROM event_participants
-       ) ep_answers ON ep_answers.event_id = ep.event_id AND ep_answers.user_id = ep.user_id
        WHERE ep.user_id = ? AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')
          AND e.status IN ('LIVE', 'COMPLETED')
        ORDER BY COALESCE(e.starts_at, e.created_at) DESC LIMIT 12`,
