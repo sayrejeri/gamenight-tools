@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Guild = { id: string; name: string; isOwner: boolean };
@@ -22,31 +22,48 @@ type RequestDraft = {
   region: string;
 };
 
-const emptyDraft: RequestDraft = {
-  name: "",
-  slug: "",
-  description: "",
-  logoUrl: "",
-  bannerUrl: "",
-  mainPlatform: "",
-  mainGame: "",
-  discordGuildId: "",
-  discordInviteUrl: "",
-  robloxCommunityUrl: "",
-  homeWorkspaceId: "",
-  teamTag: "",
-  region: "",
-};
+type RequestDrafts = Record<RequestType, RequestDraft>;
+
+function createEmptyDraft(): RequestDraft {
+  return {
+    name: "",
+    slug: "",
+    description: "",
+    logoUrl: "",
+    bannerUrl: "",
+    mainPlatform: "",
+    mainGame: "",
+    discordGuildId: "",
+    discordInviteUrl: "",
+    robloxCommunityUrl: "",
+    homeWorkspaceId: "",
+    teamTag: "",
+    region: "",
+  };
+}
+
+function createEmptyDrafts(): RequestDrafts {
+  return { SERVER: createEmptyDraft(), TEAM: createEmptyDraft() };
+}
 
 export function ProfileRequestForm({ guilds, workspaces }: { guilds: Guild[]; workspaces: Workspace[] }) {
   const router = useRouter();
   const [type, setType] = useState<RequestType>("SERVER");
-  const [draft, setDraft] = useState<RequestDraft>({ ...emptyDraft });
+  const [drafts, setDrafts] = useState<RequestDrafts>(createEmptyDrafts);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const draft = drafts[type];
 
   function updateField<K extends keyof RequestDraft>(field: K, value: RequestDraft[K]) {
-    setDraft((current) => ({ ...current, [field]: value }));
+    setDrafts((current) => ({
+      ...current,
+      [type]: { ...current[type], [field]: value },
+    }));
+  }
+
+  function selectType(nextType: RequestType) {
+    setType(nextType);
+    setMessage("");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -65,7 +82,7 @@ export function ProfileRequestForm({ guilds, workspaces }: { guilds: Guild[]; wo
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Profile request could not be submitted.");
       setMessage("Profile request submitted for staff review.");
-      setDraft({ ...emptyDraft });
+      setDrafts((current) => ({ ...current, [type]: createEmptyDraft() }));
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Profile request could not be submitted.");
@@ -77,8 +94,8 @@ export function ProfileRequestForm({ guilds, workspaces }: { guilds: Guild[]; wo
   return (
     <form className="panel section-stack" onSubmit={submit}>
       <div className="segmented-control">
-        <button type="button" className={type === "SERVER" ? "active" : ""} onClick={() => { setType("SERVER"); setMessage(""); }}>Server profile</button>
-        <button type="button" className={type === "TEAM" ? "active" : ""} onClick={() => { setType("TEAM"); setMessage(""); }}>Team profile</button>
+        <button type="button" className={type === "SERVER" ? "active" : ""} onClick={() => selectType("SERVER")}>Server profile</button>
+        <button type="button" className={type === "TEAM" ? "active" : ""} onClick={() => selectType("TEAM")}>Team profile</button>
       </div>
 
       <p className="form-note">
