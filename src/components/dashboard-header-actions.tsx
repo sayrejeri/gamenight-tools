@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { SignOutButton } from "@/components/sign-out-button";
 
@@ -33,6 +33,7 @@ export function DashboardHeaderActions({
   platformRole: string | null;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const publicUsername = siteUsername ?? fallbackUsername;
@@ -71,6 +72,23 @@ export function DashboardHeaderActions({
     setOpenMenu(null);
   }
 
+  function handleNotificationsClick(event: React.MouseEvent<HTMLAnchorElement>) {
+    closeMenus();
+    event.preventDefault();
+
+    if (pathname === "/dashboard/notifications") {
+      const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+      const safeReturnTo = returnTo?.startsWith("/dashboard") && !returnTo.startsWith("/dashboard/notifications")
+        ? returnTo
+        : "/dashboard";
+      router.push(safeReturnTo);
+      return;
+    }
+
+    const currentDashboardPage = `${window.location.pathname}${window.location.search}`;
+    router.push(`/dashboard/notifications?returnTo=${encodeURIComponent(currentDashboardPage)}`);
+  }
+
   const avatar = avatarUrl
     ? <img className="avatar" src={avatarUrl} alt="" />
     : <span className="avatar avatar-fallback">{displayName.slice(0, 1).toUpperCase()}</span>;
@@ -80,8 +98,9 @@ export function DashboardHeaderActions({
       <Link
         className="notification-link"
         href="/dashboard/notifications"
-        aria-label={`${unread} unread notifications`}
-        onClick={closeMenus}
+        aria-label={pathname === "/dashboard/notifications" ? "Return to the previous dashboard page" : `${unread} unread notifications`}
+        title={pathname === "/dashboard/notifications" ? "Return to previous page" : "Notifications"}
+        onClick={handleNotificationsClick}
       >
         <span className="notification-symbol" aria-hidden="true">🔔</span>
         {unread ? <span className="notification-count">{unread > 99 ? "99+" : unread}</span> : null}
