@@ -23,6 +23,23 @@ const requestSchema = z.object({
   region: z.string().trim().max(80).optional().default(""),
 });
 
+const fieldLabels: Record<string, string> = {
+  requestType: "profile type",
+  name: "profile name",
+  slug: "profile URL",
+  description: "description",
+  logoUrl: "logo URL",
+  bannerUrl: "banner URL",
+  mainPlatform: "main platform",
+  mainGame: "main game",
+  discordGuildId: "Discord server",
+  discordInviteUrl: "Discord invite",
+  robloxCommunityUrl: "Roblox community URL",
+  homeWorkspaceId: "affiliated server",
+  teamTag: "team tag",
+  region: "region",
+};
+
 function canManageDiscordGuild(isOwner: number, permissionsValue: string): boolean {
   if (isOwner) return true;
   try {
@@ -39,7 +56,12 @@ export async function POST(request: NextRequest) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Please check the profile request fields." }, { status: 400 });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const field = typeof issue?.path[0] === "string" ? issue.path[0] : null;
+    const label = field ? fieldLabels[field] ?? "profile request" : "profile request";
+    return NextResponse.json({ error: `Please check the ${label}. ${issue?.message ?? "One of the fields is invalid."}` }, { status: 400 });
+  }
   const data = parsed.data;
 
   if (data.requestType === "SERVER") {

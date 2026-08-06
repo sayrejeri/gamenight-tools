@@ -1,0 +1,18 @@
+.form-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(124, 92, 255, .42);
+  border-radius: 13px;
+  background: rgba(124, 92, 255, .08);
+  color: #d8d2f6;
+  line-height: 1.55;
+}
+
+.optional-label {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: .74rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-transform: none;
+}

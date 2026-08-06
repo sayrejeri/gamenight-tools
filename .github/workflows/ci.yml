@@ -5,45 +5,63 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Check out repository without a reusable action
+        shell: bash
+        run: |
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_REF}"
+          git checkout --detach FETCH_HEAD
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Type-check and build with Node.js 22
+        shell: bash
+        run: |
+          export NVM_DIR="$HOME/.nvm"
+          . "$NVM_DIR/nvm.sh"
+          nvm install 22
+          nvm use 22
+          node --version
+          npm --version
+          npm install
+          npm run typecheck
+          npm run build
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Type-check
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Prepare DirectAdmin deployment bundle
+      - name: Prepare DirectAdmin deployment ZIP
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: bash
         run: |
           rm -rf deploy
           mkdir -p deploy
           cp server.js deploy/server.js
           cp package.json deploy/package.json
           cp VERSION deploy/VERSION
-          cp DEPLOYMENT-v0.3.5.md deploy/DEPLOYMENT-v0.3.5.md
+          cp DEPLOYMENT-v0.3.6.md deploy/DEPLOYMENT-v0.3.6.md
           cp -a .next deploy/.next
           rm -rf deploy/.next/cache deploy/.next/types deploy/.next/diagnostics
           if [ -d public ]; then cp -a public deploy/public; fi
+          ZIP_NAME="gamenight-tools-v0.3.6-directadmin.zip"
+          (cd deploy && zip -qr "../${ZIP_NAME}" .)
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
 
-      - name: Upload DirectAdmin deployment bundle
+      - name: Publish DirectAdmin ZIP as a GitHub release asset
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: gamenight-tools-v0.3.5-directadmin
-          path: deploy/
-          include-hidden-files: true
-          retention-days: 14
+        shell: bash
+        run: |
+          TAG="v$(cat VERSION)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP_NAME" --clobber
+          else
+            gh release create "$TAG" "$ZIP_NAME" \
+              --target "$GITHUB_SHA" \
+              --title "Game Night Tools $TAG" \
+              --notes-file DEPLOYMENT-v0.3.6.md
+          fi

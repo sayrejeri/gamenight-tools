@@ -9,6 +9,7 @@ import "./hotfix.css";
 import "./admin-profile.css";
 import "./admin-moderation.css";
 import "./mobile-navigation.css";
+import "./request-form.css";
 
 export const metadata: Metadata = {
   title: {
