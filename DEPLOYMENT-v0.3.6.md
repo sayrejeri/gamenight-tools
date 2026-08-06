@@ -1,6 +1,6 @@
 # Game Night Tools v0.3.6 hotfix deployment
 
-This hotfix fixes profile-request form data loss and mobile dashboard menu behavior.
+This hotfix fixes profile-request form data loss, mobile dashboard menu behavior, and notification navigation.
 
 ## Included fixes
 
@@ -14,6 +14,8 @@ This hotfix fixes profile-request form data loss and mobile dashboard menu behav
 - Selecting any navigation or profile link closes the open menu immediately.
 - Tapping the dark mobile backdrop closes the active menu.
 - Pressing Escape or clicking outside the desktop profile menu closes it.
+- The notification bell remembers the dashboard page you came from.
+- Tapping the bell again while viewing Notifications returns to that previous dashboard page.
 
 ## Important
 
@@ -42,3 +44,4 @@ This hotfix fixes profile-request form data loss and mobile dashboard menu behav
 - Open the mobile profile menu, then open the hamburger menu and confirm only the hamburger remains open.
 - Select a menu link and confirm the menu closes as the new page opens.
 - Tap the dark background and confirm the active menu closes.
+- Open Notifications from another dashboard page, then tap the bell again and confirm it returns to that page.
