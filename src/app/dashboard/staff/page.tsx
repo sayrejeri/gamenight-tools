@@ -15,20 +15,31 @@ type AuditRow = RowDataPacket & { id: string; action_name: string; actor_name: s
 type CountRow = RowDataPacket & { total: number };
 type RecentUserRow = RowDataPacket & { id: string; discord_id: string; display_name: string; site_username: string | null; avatar_hash: string | null; account_status: string; last_login_at: Date };
 
+type SafeQueryResult<T> = { rows: T; failed: boolean; label: string };
+
+async function safeStaffQuery<T extends RowDataPacket[]>(label: string, task: Promise<T>): Promise<SafeQueryResult<T>> {
+  try {
+    return { rows: await task, failed: false, label };
+  } catch (error) {
+    console.error(`Staff dashboard query failed: ${label}`, error);
+    return { rows: [] as unknown as T, failed: true, label };
+  }
+}
+
 export default async function StaffDashboardPage() {
   const session = await requireSession();
   const role = await getPlatformRole(session.userId);
   if (!role) notFound();
 
-  const [requests, reports, staff, audit, userCounts, recentUsers] = await Promise.all([
-    canReviewProfiles(role) ? query<RequestRow[]>(
+  const [requestResult, reportResult, staffResult, auditResult, countResult, recentUserResult] = await Promise.all([
+    canReviewProfiles(role) ? safeStaffQuery("profile requests", query<RequestRow[]>(
       `SELECT pr.id, pr.request_type, pr.requested_name, pr.description, pr.main_platform,
               pr.main_game, pr.discord_guild_id, pr.created_at,
               COALESCE(u.site_username, u.global_name, u.username) AS applicant_name
        FROM profile_requests pr INNER JOIN users u ON u.id = pr.applicant_user_id
        WHERE pr.status = 'PENDING' ORDER BY pr.created_at ASC LIMIT 100`,
-    ) : Promise.resolve([] as RequestRow[]),
-    canModeratePlatform(role) ? query<ReportRow[]>(
+    )) : Promise.resolve({ rows: [] as RequestRow[], failed: false, label: "profile requests" }),
+    canModeratePlatform(role) ? safeStaffQuery("reports", query<ReportRow[]>(
       `SELECT r.id, r.target_type, r.target_id, r.reason, r.details, r.status, r.created_at,
               COALESCE(reporter.site_username, reporter.global_name, reporter.username) AS reporter_name,
               target.site_username AS target_username,
@@ -37,30 +48,38 @@ export default async function StaffDashboardPage() {
        INNER JOIN users reporter ON reporter.id = r.reporter_user_id
        LEFT JOIN users target ON r.target_type = 'USER' AND CAST(target.id AS CHAR) = r.target_id
        WHERE r.status IN ('OPEN', 'UNDER_REVIEW') ORDER BY r.created_at ASC LIMIT 100`,
-    ) : Promise.resolve([] as ReportRow[]),
-    canManagePlatformStaff(role) ? query<StaffRow[]>(
+    )) : Promise.resolve({ rows: [] as ReportRow[], failed: false, label: "reports" }),
+    canManagePlatformStaff(role) ? safeStaffQuery("platform staff", query<StaffRow[]>(
       `SELECT psr.user_id, psr.role, COALESCE(u.site_username, u.global_name, u.username) AS name
        FROM platform_staff_roles psr INNER JOIN users u ON u.id = psr.user_id
        WHERE psr.status = 'ACTIVE' ORDER BY FIELD(psr.role, 'OWNER', 'ADMIN', 'REVIEWER', 'MODERATOR', 'SUPPORT'), name`,
-    ) : Promise.resolve([] as StaffRow[]),
-    query<AuditRow[]>(
+    )) : Promise.resolve({ rows: [] as StaffRow[], failed: false, label: "platform staff" }),
+    safeStaffQuery("audit log", query<AuditRow[]>(
       `SELECT al.id, al.action_name, al.target_type, al.target_id, al.created_at,
               COALESCE(u.site_username, u.global_name, u.username) AS actor_name
-       FROM audit_logs al INNER JOIN users u ON u.id = al.actor_user_id
+       FROM audit_logs al LEFT JOIN users u ON u.id = al.actor_user_id
        WHERE al.action_name LIKE 'profile_request.%' OR al.action_name LIKE 'platform_staff.%'
           OR al.action_name LIKE 'report.%' OR al.action_name LIKE 'workspace.%'
           OR al.action_name LIKE 'platform_user.%'
        ORDER BY al.created_at DESC LIMIT 30`,
-    ),
-    query<CountRow[]>(`SELECT COUNT(*) AS total FROM users`),
-    query<RecentUserRow[]>(
+    )),
+    safeStaffQuery("user count", query<CountRow[]>(`SELECT COUNT(*) AS total FROM users`)),
+    safeStaffQuery("recent users", query<RecentUserRow[]>(
       `SELECT CAST(id AS CHAR) AS id, discord_id, COALESCE(global_name, username) AS display_name,
               site_username, avatar_hash, account_status, last_login_at
        FROM users ORDER BY last_login_at DESC LIMIT 8`,
-    ),
+    )),
   ]);
 
-  const userCount = Number(userCounts[0]?.total ?? 0);
+  const requests = requestResult.rows;
+  const reports = reportResult.rows;
+  const staff = staffResult.rows;
+  const audit = auditResult.rows;
+  const recentUsers = recentUserResult.rows;
+  const userCount = Number(countResult.rows[0]?.total ?? 0);
+  const failedSections = [requestResult, reportResult, staffResult, auditResult, countResult, recentUserResult]
+    .filter((result) => result.failed)
+    .map((result) => result.label);
 
   return (
     <div className="section-stack">
@@ -68,9 +87,12 @@ export default async function StaffDashboardPage() {
         <div><span className="eyebrow">Private platform operations</span><h1>Staff dashboard</h1><p>Review organization profiles, handle reports, manage platform staff, inspect website users, and audit administrative actions.</p></div>
         <div className="button-row"><Link className="button button-secondary" href="/dashboard/staff/users">Website users</Link>{role === "OWNER" || role === "ADMIN" ? <Link className="button button-secondary" href="/dashboard/staff/servers">Server profiles</Link> : null}<span className="badge">{role}</span></div>
       </section>
+
+      {failedSections.length ? <p className="staff-query-warning">The dashboard loaded, but these sections could not be read: {failedSections.join(", ")}. The working sections are still available.</p> : null}
+
       <div className="staff-stat-grid"><article className="stat-card"><strong>{userCount}</strong><span>Website users</span></article><article className="stat-card"><strong>{requests.length}</strong><span>Profile requests</span></article><article className="stat-card"><strong>{reports.length}</strong><span>Open reports</span></article><article className="stat-card"><strong>{staff.length || 1}</strong><span>Platform staff</span></article><article className="stat-card"><strong>{audit.length}</strong><span>Recent actions</span></article></div>
 
-      <section className="panel section-stack"><div className="section-header"><div><h2>Website users</h2><p>Every person who has signed in with Discord is stored as a Game Night Tools user.</p></div><Link className="button" href="/dashboard/staff/users">View all {userCount} users</Link></div>{recentUsers.length ? <div className="staff-user-preview">{recentUsers.map((user) => { const avatarUrl = user.avatar_hash ? `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.avatar_hash}.png?size=128` : null; return <article className="list-card" key={user.id}>{avatarUrl ? <img src={avatarUrl} alt="" /> : <span className="list-icon">{user.display_name.slice(0, 2)}</span>}<div><strong>{user.display_name}</strong><span>{user.site_username ? `@${user.site_username}` : `Discord ID ${user.discord_id}`}</span><small>Last login {new Date(user.last_login_at).toLocaleString()}</small></div><span className="badge">{user.account_status}</span></article>; })}</div> : <div className="empty-state">No website users have signed in yet.</div>}</section>
+      <section className="panel section-stack"><div className="section-header"><div><h2>Website users</h2><p>Every person who has signed in with Discord is stored as a Game Night Tools user.</p></div><Link className="button" href="/dashboard/staff/users">View all {userCount} users</Link></div>{recentUsers.length ? <div className="staff-user-preview">{recentUsers.map((user) => { const avatarUrl = user.avatar_hash ? `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.avatar_hash}.png?size=128` : null; return <article className="list-card" key={user.id}>{avatarUrl ? <img src={avatarUrl} alt="" /> : <span className="list-icon">{user.display_name.slice(0, 2)}</span>}<div><strong>{user.display_name}</strong><span>{user.site_username ? `@${user.site_username}` : `Discord ID ${user.discord_id}`}</span><small>Last login {new Date(user.last_login_at).toLocaleString()}</small></div><span className="badge">{user.account_status}</span></article>; })}</div> : <div className="empty-state">No website users could be displayed.</div>}</section>
 
       {canReviewProfiles(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Profile approval queue</h2><p>Approve legitimate communities and teams, request changes, or deny impersonation and incomplete requests.</p></div></div>{requests.length ? <div className="review-grid">{requests.map((item) => <article className="review-card" key={item.id}><span className="card-kicker">{item.request_type} · {item.applicant_name}</span><h3>{item.requested_name}</h3><p>{item.description ?? "No description provided."}</p><div className="button-row">{item.main_platform ? <span className="badge">{item.main_platform}</span> : null}{item.main_game ? <span className="badge">{item.main_game}</span> : null}{item.discord_guild_id ? <span className="badge">Discord verified</span> : null}</div><StaffReviewControls requestId={item.id} /></article>)}</div> : <div className="empty-state">No profiles are waiting for review.</div>}</section> : null}
 
@@ -78,7 +100,7 @@ export default async function StaffDashboardPage() {
 
       {canManagePlatformStaff(role) ? <section className="panel section-stack"><div className="section-header"><div><h2>Platform staff</h2><p>Assign scoped access without sharing accounts. Platform owners and admins can also modify approved server profiles.</p></div></div><PlatformStaffForm staff={staff.map((member) => ({ userId: member.user_id, name: member.name, role: member.role }))} /></section> : null}
 
-      <section className="panel section-stack"><div className="section-header"><div><h2>Moderation audit trail</h2><p>Recent platform profile, staff, report, server-management, and user-moderation actions.</p></div></div>{audit.length ? <div className="audit-list">{audit.map((item) => <div className="audit-row" key={item.id}><div><strong>{item.action_name.replaceAll(".", " · ").replaceAll("_", " ")}</strong><span>{item.actor_name}{item.target_type ? ` · ${item.target_type} ${item.target_id ?? ""}` : ""}</span></div><time>{new Date(item.created_at).toLocaleString()}</time></div>)}</div> : <div className="empty-state">No platform staff actions have been recorded yet.</div>}</section>
+      <section className="panel section-stack"><div className="section-header"><div><h2>Moderation audit trail</h2><p>Recent platform profile, staff, report, server-management, and user-moderation actions.</p></div></div>{audit.length ? <div className="audit-list">{audit.map((item) => <div className="audit-row" key={item.id}><div><strong>{item.action_name.replaceAll(".", " · ").replaceAll("_", " ")}</strong><span>{item.actor_name ?? "Unknown staff user"}{item.target_type ? ` · ${item.target_type} ${item.target_id ?? ""}` : ""}</span></div><time>{new Date(item.created_at).toLocaleString()}</time></div>)}</div> : <div className="empty-state">No platform staff actions could be displayed.</div>}</section>
     </div>
   );
 }
