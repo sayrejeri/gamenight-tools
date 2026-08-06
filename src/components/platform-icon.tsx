@@ -21,12 +21,13 @@ const SIMPLE_ICON_SLUGS: Record<string, string> = {
   twitch: "twitch",
   twitter: "x",
   x: "x",
-  xbox: "xbox",
   youtube: "youtube",
 };
 
 export function platformIconUrl(type: string): string | null {
-  const slug = SIMPLE_ICON_SLUGS[normalizeConnectionType(type)];
+  const normalized = normalizeConnectionType(type);
+  if (normalized === "xbox") return "/platform-icons/xbox.svg";
+  const slug = SIMPLE_ICON_SLUGS[normalized];
   return slug ? `https://cdn.simpleicons.org/${slug}/ffffff` : null;
 }
 
@@ -37,10 +38,11 @@ export function PlatformIcon({ type, avatarUrl, size = "medium" }: { type: strin
 
   useEffect(() => setFailed(false), [source]);
 
+  const showImage = Boolean(source && !failed);
+
   return (
     <span className={`platform-icon platform-icon-${size}`} aria-hidden="true">
-      <strong>{label.slice(0, 2).toUpperCase()}</strong>
-      {source && !failed ? <img src={source} alt="" onError={() => setFailed(true)} /> : null}
+      {showImage ? <img src={source!} alt="" onError={() => setFailed(true)} /> : <strong>{label.slice(0, 2).toUpperCase()}</strong>}
     </span>
   );
 }
