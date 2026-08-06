@@ -9,7 +9,9 @@ import { PlatformStaffForm } from "@/components/platform-staff-form";
 import { ReportReviewControls } from "@/components/report-review-controls";
 
 type RequestRow = RowDataPacket & { id: string; request_type: string; requested_name: string; description: string | null; main_platform: string | null; main_game: string | null; applicant_name: string; discord_guild_id: string | null; created_at: Date };
-type ReportRow = RowDataPacket & { id: string; target_type: string; target_id: string; reason: string; details: string | null; status: string; reporter_name: string; target_username: string | null; target_display_name: string | null; created_at: Date };
+type RawReportRow = RowDataPacket & { id: string; reporter_user_id: string | number; target_type: string; target_id: string; reason: string; details: string | null; status: string; created_at: Date };
+type ReportRow = RawReportRow & { reporter_name: string; target_username: string | null; target_display_name: string | null };
+type ReportUserRow = RowDataPacket & { id: string | number; site_username: string | null; display_name: string };
 type StaffRow = RowDataPacket & { user_id: string; role: string; name: string };
 type AuditRow = RowDataPacket & { id: string; action_name: string; actor_name: string; target_type: string | null; target_id: string | null; created_at: Date };
 type CountRow = RowDataPacket & { total: number };
@@ -39,16 +41,13 @@ export default async function StaffDashboardPage() {
        FROM profile_requests pr INNER JOIN users u ON u.id = pr.applicant_user_id
        WHERE pr.status = 'PENDING' ORDER BY pr.created_at ASC LIMIT 100`,
     )) : Promise.resolve({ rows: [] as RequestRow[], failed: false, label: "profile requests" }),
-    canModeratePlatform(role) ? safeStaffQuery("reports", query<ReportRow[]>(
-      `SELECT r.id, r.target_type, r.target_id, r.reason, r.details, r.status, r.created_at,
-              COALESCE(reporter.site_username, reporter.global_name, reporter.username) AS reporter_name,
-              target.site_username AS target_username,
-              COALESCE(target.global_name, target.username) AS target_display_name
+    canModeratePlatform(role) ? safeStaffQuery("reports", query<RawReportRow[]>(
+      `SELECT r.id, r.reporter_user_id, r.target_type, r.target_id, r.reason,
+              r.details, r.status, r.created_at
        FROM reports r
-       INNER JOIN users reporter ON reporter.id = r.reporter_user_id
-       LEFT JOIN users target ON r.target_type = 'USER' AND CAST(target.id AS CHAR) = r.target_id
-       WHERE r.status IN ('OPEN', 'UNDER_REVIEW') ORDER BY r.created_at ASC LIMIT 100`,
-    )) : Promise.resolve({ rows: [] as ReportRow[], failed: false, label: "reports" }),
+       WHERE r.status IN ('OPEN', 'UNDER_REVIEW')
+       ORDER BY r.created_at ASC LIMIT 100`,
+    )) : Promise.resolve({ rows: [] as RawReportRow[], failed: false, label: "reports" }),
     canManagePlatformStaff(role) ? safeStaffQuery("platform staff", query<StaffRow[]>(
       `SELECT psr.user_id, psr.role, COALESCE(u.site_username, u.global_name, u.username) AS name
        FROM platform_staff_roles psr INNER JOIN users u ON u.id = psr.user_id
@@ -71,13 +70,38 @@ export default async function StaffDashboardPage() {
     )),
   ]);
 
+  const reportUserIds = Array.from(new Set(reportResult.rows.flatMap((report) => {
+    const ids = [String(report.reporter_user_id)];
+    if (report.target_type === "USER" && /^\d+$/.test(report.target_id)) ids.push(report.target_id);
+    return ids;
+  })));
+
+  const reportUserResult = reportUserIds.length
+    ? await safeStaffQuery("report user details", query<ReportUserRow[]>(
+        `SELECT id, site_username, COALESCE(global_name, username) AS display_name
+         FROM users WHERE id IN (${reportUserIds.map(() => "?").join(", ")})`,
+        reportUserIds,
+      ))
+    : { rows: [] as ReportUserRow[], failed: false, label: "report user details" };
+
+  const reportUserMap = new Map(reportUserResult.rows.map((user) => [String(user.id), user]));
+  const reports: ReportRow[] = reportResult.rows.map((report) => {
+    const reporter = reportUserMap.get(String(report.reporter_user_id));
+    const reportedUser = report.target_type === "USER" ? reportUserMap.get(report.target_id) : undefined;
+    return {
+      ...report,
+      reporter_name: reporter?.site_username ?? reporter?.display_name ?? `User ${String(report.reporter_user_id)}`,
+      target_username: reportedUser?.site_username ?? null,
+      target_display_name: reportedUser?.display_name ?? null,
+    };
+  });
+
   const requests = requestResult.rows;
-  const reports = reportResult.rows;
   const staff = staffResult.rows;
   const audit = auditResult.rows;
   const recentUsers = recentUserResult.rows;
   const userCount = Number(countResult.rows[0]?.total ?? 0);
-  const failedSections = [requestResult, reportResult, staffResult, auditResult, countResult, recentUserResult]
+  const failedSections = [requestResult, reportResult, reportUserResult, staffResult, auditResult, countResult, recentUserResult]
     .filter((result) => result.failed)
     .map((result) => result.label);
 
