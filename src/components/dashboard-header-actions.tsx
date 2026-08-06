@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { SignOutButton } from "@/components/sign-out-button";
 
 const primaryLinks = [
@@ -72,16 +72,15 @@ export function DashboardHeaderActions({
     setOpenMenu(null);
   }
 
-  function handleNotificationsClick(event: React.MouseEvent<HTMLAnchorElement>) {
+  function handleNotificationsClick(event: MouseEvent<HTMLAnchorElement>) {
     closeMenus();
     event.preventDefault();
 
     if (pathname === "/dashboard/notifications") {
       const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-      const safeReturnTo = returnTo?.startsWith("/dashboard") && !returnTo.startsWith("/dashboard/notifications")
-        ? returnTo
-        : "/dashboard";
-      router.push(safeReturnTo);
+      const isDashboardPath = returnTo === "/dashboard" || returnTo?.startsWith("/dashboard/");
+      const isNotificationsPath = returnTo?.startsWith("/dashboard/notifications");
+      router.push(returnTo && isDashboardPath && !isNotificationsPath ? returnTo : "/dashboard");
       return;
     }
 
