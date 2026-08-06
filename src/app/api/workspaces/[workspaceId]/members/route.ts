@@ -29,6 +29,8 @@ type MemberRow = RowDataPacket & {
   discord_id: string;
 };
 
+type WorkspaceRow = RowDataPacket & { name: string };
+
 function canManageWorkspace(role: string | null): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
@@ -51,11 +53,20 @@ async function resolveUser(identifier: string): Promise<UserRow | null> {
   return rows[0] ?? null;
 }
 
+async function getWorkspaceName(workspaceId: string): Promise<string | null> {
+  const rows = await query<WorkspaceRow[]>(`SELECT name FROM workspaces WHERE id = ? LIMIT 1`, [workspaceId]);
+  return rows[0]?.name ?? null;
+}
+
 export async function POST(request: NextRequest, context: { params: Promise<{ workspaceId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const { workspaceId } = await context.params;
-  const actorRole = await getWorkspaceRole(session.userId, workspaceId);
+  const [actorRole, workspaceName] = await Promise.all([
+    getWorkspaceRole(session.userId, workspaceId),
+    getWorkspaceName(workspaceId),
+  ]);
+  if (!workspaceName) return NextResponse.json({ error: "Server profile not found." }, { status: 404 });
   if (!canManageWorkspace(actorRole)) return NextResponse.json({ error: "Server owner or admin access is required." }, { status: 403 });
 
   const parsed = addSchema.safeParse(await request.json().catch(() => null));
@@ -95,8 +106,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ wo
       }
       await connection.execute(
         `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
-         VALUES (?, ?, 'WORKSPACE_ROLE_ASSIGNED', 'SERVERS', 'Server access updated', ?, ?)`,
-        [randomUUID(), user.id, `Your server role is now ${parsed.data.role.toLowerCase()}.`, `/dashboard/workspaces/${workspaceId}`],
+         VALUES (?, ?, 'WORKSPACE_ROLE_ASSIGNED', 'SERVERS', ?, ?, ?)`,
+        [randomUUID(), user.id, `${workspaceName} access updated`, `Your role for ${workspaceName} is now ${parsed.data.role.toLowerCase()}.`, `/dashboard/workspaces/${workspaceId}`],
       );
     } else {
       await connection.execute(
@@ -124,7 +135,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ w
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const { workspaceId } = await context.params;
-  const actorRole = await getWorkspaceRole(session.userId, workspaceId);
+  const [actorRole, workspaceName] = await Promise.all([
+    getWorkspaceRole(session.userId, workspaceId),
+    getWorkspaceName(workspaceId),
+  ]);
+  if (!workspaceName) return NextResponse.json({ error: "Server profile not found." }, { status: 404 });
   if (!canManageWorkspace(actorRole)) return NextResponse.json({ error: "Server owner or admin access is required." }, { status: 403 });
 
   const parsed = updateSchema.safeParse(await request.json().catch(() => null));
@@ -160,6 +175,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ w
         [workspaceId, target.discord_id],
       );
     }
+    await connection.execute(
+      `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
+       VALUES (?, ?, 'WORKSPACE_ROLE_ASSIGNED', 'SERVERS', ?, ?, ?)`,
+      [randomUUID(), parsed.data.userId, `${workspaceName} access updated`, `Your role for ${workspaceName} is now ${parsed.data.role.toLowerCase()}.`, `/dashboard/workspaces/${workspaceId}`],
+    );
   });
   await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.role_updated", targetType: "user", targetId: parsed.data.userId, details: { previousRole: target.role, role: parsed.data.role } });
   return NextResponse.json({ success: true });
@@ -169,7 +189,11 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const { workspaceId } = await context.params;
-  const actorRole = await getWorkspaceRole(session.userId, workspaceId);
+  const [actorRole, workspaceName] = await Promise.all([
+    getWorkspaceRole(session.userId, workspaceId),
+    getWorkspaceName(workspaceId),
+  ]);
+  if (!workspaceName) return NextResponse.json({ error: "Server profile not found." }, { status: 404 });
   if (!canManageWorkspace(actorRole)) return NextResponse.json({ error: "Server owner or admin access is required." }, { status: 403 });
 
   const url = new URL(request.url);
@@ -197,6 +221,11 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       await connection.execute(
         `DELETE FROM workspace_owner_claims WHERE workspace_id = ? AND discord_id = ?`,
         [workspaceId, target.discord_id],
+      );
+      await connection.execute(
+        `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
+         VALUES (?, ?, 'WORKSPACE_ROLE_REMOVED', 'SERVERS', ?, ?, ?)`,
+        [randomUUID(), userId, `${workspaceName} access removed`, `Your server-profile access for ${workspaceName} was removed.`, `/dashboard/workspaces/${workspaceId}`],
       );
     });
     await writeAuditLog({ actorUserId: session.userId, workspaceId, action: "workspace.member.removed", targetType: "user", targetId: userId, details: { previousRole: target.role } });
