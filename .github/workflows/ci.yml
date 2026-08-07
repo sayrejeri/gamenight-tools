@@ -1,68 +1,80 @@
-name: CI
+name: Local release build
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
+  build:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 60
     steps:
-      - name: Check out repository without a reusable action
-        shell: bash
+      - name: Build Game Night Tools v0.3.6 on this PC
+        shell: powershell
         run: |
-          git init .
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --depth=1 origin "${GITHUB_REF}"
-          git checkout --detach FETCH_HEAD
+          $ErrorActionPreference = "Stop"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-      - name: Type-check and build with Node.js 22
-        shell: bash
-        run: |
-          export NVM_DIR="$HOME/.nvm"
-          . "$NVM_DIR/nvm.sh"
-          nvm install 22
-          nvm use 22
+          $work = Join-Path $env:RUNNER_TEMP "gamenight-tools-v0.3.6"
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22"
+          $releaseRoot = "C:\GameNightToolsRelease"
+          $zipPath = Join-Path $releaseRoot "gamenight-tools-v0.3.6-directadmin.zip"
+
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $work, $nodeRoot, $releaseRoot | Out-Null
+
+          Write-Host "Downloading the merged repository..."
+          git clone --depth 1 "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+          Set-Location $work
+
+          Write-Host "Downloading Node.js 22..."
+          $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
+          $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
+          if (-not $nodeVersion) { throw "Could not determine the latest Node.js 22 version." }
+          $nodeZip = Join-Path $env:RUNNER_TEMP "node22.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip" -OutFile $nodeZip
+          Expand-Archive $nodeZip -DestinationPath $nodeRoot -Force
+          $nodeDir = Join-Path $nodeRoot "node-$nodeVersion-win-x64"
+          $env:Path = "$nodeDir;$env:Path"
+
           node --version
           npm --version
+
+          Write-Host "Installing dependencies..."
           npm install
+
+          Write-Host "Running TypeScript check..."
           npm run typecheck
+
+          Write-Host "Creating production build..."
           npm run build
 
-      - name: Prepare DirectAdmin deployment ZIP
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        shell: bash
-        run: |
-          rm -rf deploy
-          mkdir -p deploy
-          cp server.js deploy/server.js
-          cp package.json deploy/package.json
-          cp VERSION deploy/VERSION
-          cp DEPLOYMENT-v0.3.6.md deploy/DEPLOYMENT-v0.3.6.md
-          cp -a .next deploy/.next
-          rm -rf deploy/.next/cache deploy/.next/types deploy/.next/diagnostics
-          if [ -d public ]; then cp -a public deploy/public; fi
-          ZIP_NAME="gamenight-tools-v0.3.6-directadmin.zip"
-          (cd deploy && zip -qr "../${ZIP_NAME}" .)
-          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          Write-Host "Preparing DirectAdmin package..."
+          $deploy = Join-Path $work "deploy"
+          if (Test-Path $deploy) { Remove-Item $deploy -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $deploy | Out-Null
 
-      - name: Publish DirectAdmin ZIP as a GitHub release asset
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        shell: bash
-        run: |
-          TAG="v$(cat VERSION)"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ZIP_NAME" --clobber
-          else
-            gh release create "$TAG" "$ZIP_NAME" \
-              --target "$GITHUB_SHA" \
-              --title "Game Night Tools $TAG" \
-              --notes-file DEPLOYMENT-v0.3.6.md
-          fi
+          Copy-Item "server.js" $deploy
+          Copy-Item "package.json" $deploy
+          Copy-Item "VERSION" $deploy
+          Copy-Item "DEPLOYMENT-v0.3.6.md" $deploy
+          Copy-Item ".next" (Join-Path $deploy ".next") -Recurse -Force
+          if (Test-Path "public") { Copy-Item "public" (Join-Path $deploy "public") -Recurse -Force }
+
+          @(
+            (Join-Path $deploy ".next\cache"),
+            (Join-Path $deploy ".next\types"),
+            (Join-Path $deploy ".next\diagnostics")
+          ) | ForEach-Object {
+            if (Test-Path $_) { Remove-Item $_ -Recurse -Force }
+          }
+
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path (Join-Path $deploy "*") -DestinationPath $zipPath -CompressionLevel Optimal
+
+          Write-Host ""
+          Write-Host "BUILD COMPLETE"
+          Write-Host "Your DirectAdmin ZIP is here: $zipPath"
