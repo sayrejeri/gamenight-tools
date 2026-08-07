@@ -254,20 +254,21 @@ export default async function EventPage({ params }: { params: Promise<{ eventId:
         </section>
       </div>
 
-      {!canManageEvent ? (
-        <section className="panel section-stack">
-          <div><h2>Your event spot</h2><p className="muted">Sign up with the game identity required by the host, then check in when it opens.</p></div>
-          <EventSignupControls
-            eventId={eventId}
-            eventStatus={event.status}
-            participantStatus={participant?.status ?? null}
-            checkedIn={Boolean(participant?.checked_in_at)}
-            joinCodeRequired={Boolean(event.join_code_required)}
-            requiredConnectionType={event.required_connection_type}
-            connections={userConnections}
-          />
-        </section>
-      ) : null}
+      <section className="panel section-stack">
+        <div>
+          <h2>Your event spot</h2>
+          <p className="muted">{canManageEvent ? "You can manage this event and still participate in it." : "Sign up with the game identity required by the host, then check in when it opens."}</p>
+        </div>
+        <EventSignupControls
+          eventId={eventId}
+          eventStatus={event.status}
+          participantStatus={participant?.status ?? null}
+          checkedIn={Boolean(participant?.checked_in_at)}
+          joinCodeRequired={Boolean(event.join_code_required)}
+          requiredConnectionType={event.required_connection_type}
+          connections={userConnections}
+        />
+      </section>
 
       {event.bracket_enabled ? (
         <section className="panel section-stack">
@@ -332,7 +333,7 @@ export default async function EventPage({ params }: { params: Promise<{ eventId:
 
       {canManageEvent ? (
         <section className="panel section-stack">
-          <div className="section-header"><div><h2>Invite a co-host</h2><p>Use their permanent Discord user ID. They will see the invitation after logging in.</p></div></div>
+          <div className="section-header"><div><h2>Invite a co-host</h2><p>Search a Game Night Tools user by site username or Discord username, or enter a numeric Discord ID for someone who has not signed in yet.</p></div></div>
           <CohostInviteForm eventId={eventId} />
         </section>
       ) : null}
