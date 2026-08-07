@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { readSession } from "@/lib/auth";
 import { BrandMark } from "@/components/brand-mark";
+import { PublicFooter } from "@/components/public-footer";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,10 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     <main className="landing-shell">
       <nav className="topbar">
         <BrandMark href="/" />
-        {session ? <Link className="button" href="/dashboard">Open dashboard</Link> : <a className="button" href="/api/auth/discord/login">Continue with Discord</a>}
+        <div className="button-row">
+          <Link className="button button-secondary" href="/help">How it works</Link>
+          {session ? <Link className="button" href="/dashboard">Open dashboard</Link> : <a className="button" href="/api/auth/discord/login">Continue with Discord</a>}
+        </div>
       </nav>
 
       <section className="hero">
@@ -47,6 +51,8 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         <article className="card"><span className="card-kicker">Suggestions</span><h2>Let the community shape updates</h2><p>Members can submit ideas, upvote or downvote, comment, and follow each suggestion from review to planned, development, and release.</p></article>
         <article className="card"><span className="card-kicker">Tools</span><h2>Keep useful host utilities together</h2><p>Build brackets, random teams, quick matchups, map picks, Discord announcements, and local-time countdowns from one tools hub.</p></article>
       </section>
+
+      <PublicFooter />
     </main>
   );
 }
