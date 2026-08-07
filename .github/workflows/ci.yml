@@ -20,7 +20,7 @@ jobs:
           $work = Join-Path $env:RUNNER_TEMP "gamenight-tools-v0.3.6"
           $nodeRoot = Join-Path $env:RUNNER_TEMP "node22"
           $releaseRoot = "C:\GameNightToolsRelease"
-          $zipPath = Join-Path $releaseRoot "gamenight-tools-v0.3.6-directadmin.zip"
+          $zipPath = Join-Path $releaseRoot "gamenight-tools-v0.3.6-directadmin-FIXED.zip"
 
           if (Test-Path $work) { Remove-Item $work -Recurse -Force }
           if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
@@ -73,8 +73,26 @@ jobs:
           }
 
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-          Compress-Archive -Path (Join-Path $deploy "*") -DestinationPath $zipPath -CompressionLevel Optimal
+
+          Write-Host "Creating a Linux-compatible ZIP with forward-slash paths..."
+          & tar.exe -c -a -f $zipPath -C $deploy .
+          if ($LASTEXITCODE -ne 0) { throw "tar.exe could not create the deployment ZIP." }
+
+          Write-Host "Verifying ZIP paths..."
+          $entries = @(& tar.exe -t -f $zipPath)
+          if ($LASTEXITCODE -ne 0) { throw "The deployment ZIP could not be read after creation." }
+
+          $badEntries = @($entries | Where-Object { $_ -match "\\" })
+          if ($badEntries.Count -gt 0) {
+            throw "The ZIP contains Windows backslash paths and is unsafe to extract on DirectAdmin."
+          }
+
+          $hasBuildId = $entries | Where-Object { $_ -match "^(\./)?\.next/BUILD_ID$" }
+          if (-not $hasBuildId) {
+            throw "ZIP verification failed: .next/BUILD_ID is not stored as a real folder path."
+          }
 
           Write-Host ""
           Write-Host "BUILD COMPLETE"
-          Write-Host "Your DirectAdmin ZIP is here: $zipPath"
+          Write-Host "ZIP PATHS VERIFIED FOR DIRECTADMIN"
+          Write-Host "Your corrected DirectAdmin ZIP is here: $zipPath"
