@@ -31,6 +31,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
             {session ? <Link className="button button-large" href="/dashboard">Go to your dashboard</Link> : <a className="button button-large" href="/api/auth/discord/login">Sign in with Discord</a>}
             <a className="button button-secondary button-large" href="#foundation">Explore the platform</a>
           </div>
+          {!session ? <p className="legal-consent-note">By continuing with Discord, you agree to the <Link href="/terms">Terms of Service</Link> and acknowledge the <Link href="/privacy">Privacy Policy</Link>.</p> : null}
           {params.authError ? <p className="error-banner">Discord login failed. Please try again.</p> : null}
         </div>
         <div className="hero-panel">
