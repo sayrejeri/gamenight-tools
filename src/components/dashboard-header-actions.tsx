@@ -127,6 +127,7 @@ export function DashboardHeaderActions({
           <Link href="/dashboard/profile" onClick={closeMenus}>Game identities</Link>
           <Link href="/dashboard/settings" onClick={closeMenus}>Settings</Link>
           <Link href="/dashboard/profile-requests" onClick={closeMenus}>Profile requests</Link>
+          <Link href="/help" onClick={closeMenus}>Help & walkthrough</Link>
           {platformRole ? <Link href="/dashboard/staff" onClick={closeMenus}>Staff dashboard <span className="badge">{platformRole}</span></Link> : null}
           <SignOutButton />
         </div>
