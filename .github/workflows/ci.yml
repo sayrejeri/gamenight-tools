@@ -72,27 +72,83 @@ jobs:
             if (Test-Path $_) { Remove-Item $_ -Recurse -Force }
           }
 
+          $deployFiles = @(Get-ChildItem -LiteralPath $deploy -File -Recurse -Force)
+          if ($deployFiles.Count -lt 20) {
+            throw "Deployment staging folder is unexpectedly small: only $($deployFiles.Count) files."
+          }
+
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
-          Write-Host "Creating a Linux-compatible ZIP with forward-slash paths..."
-          & tar.exe -c -a -f $zipPath -C $deploy .
-          if ($LASTEXITCODE -ne 0) { throw "tar.exe could not create the deployment ZIP." }
+          Write-Host "Creating a populated Linux-compatible ZIP..."
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-          Write-Host "Verifying ZIP paths..."
-          $entries = @(& tar.exe -t -f $zipPath)
-          if ($LASTEXITCODE -ne 0) { throw "The deployment ZIP could not be read after creation." }
+          $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
+          $archive = New-Object System.IO.Compression.ZipArchive(
+            $zipStream,
+            [System.IO.Compression.ZipArchiveMode]::Create,
+            $false
+          )
+
+          try {
+            foreach ($file in $deployFiles) {
+              $relative = $file.FullName.Substring($deploy.Length).TrimStart([char[]]"\/").Replace("\", "/")
+              if ([string]::IsNullOrWhiteSpace($relative)) { continue }
+
+              $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
+              $entryStream = $entry.Open()
+              $sourceStream = $file.OpenRead()
+              try {
+                $sourceStream.CopyTo($entryStream)
+              }
+              finally {
+                $sourceStream.Dispose()
+                $entryStream.Dispose()
+              }
+            }
+          }
+          finally {
+            $archive.Dispose()
+            $zipStream.Dispose()
+          }
+
+          Write-Host "Verifying ZIP contents and paths..."
+          $readStream = [System.IO.File]::OpenRead($zipPath)
+          $readArchive = New-Object System.IO.Compression.ZipArchive(
+            $readStream,
+            [System.IO.Compression.ZipArchiveMode]::Read,
+            $false
+          )
+
+          try {
+            $entries = @($readArchive.Entries | ForEach-Object { $_.FullName })
+          }
+          finally {
+            $readArchive.Dispose()
+            $readStream.Dispose()
+          }
+
+          if ($entries.Count -lt 20) {
+            throw "ZIP verification failed: only $($entries.Count) files were stored."
+          }
 
           $badEntries = @($entries | Where-Object { $_ -match "\\" })
           if ($badEntries.Count -gt 0) {
-            throw "The ZIP contains Windows backslash paths and is unsafe to extract on DirectAdmin."
+            throw "The ZIP contains Windows backslash paths and is unsafe for DirectAdmin."
           }
 
-          $hasBuildId = $entries | Where-Object { $_ -match "^(\./)?\.next/BUILD_ID$" }
-          if (-not $hasBuildId) {
-            throw "ZIP verification failed: .next/BUILD_ID is not stored as a real folder path."
+          foreach ($requiredEntry in @(".next/BUILD_ID", "server.js", "package.json", "VERSION")) {
+            if ($entries -notcontains $requiredEntry) {
+              throw "ZIP verification failed: missing $requiredEntry"
+            }
+          }
+
+          $zipSize = (Get-Item $zipPath).Length
+          if ($zipSize -lt 100000) {
+            throw "ZIP verification failed: archive is only $zipSize bytes."
           }
 
           Write-Host ""
           Write-Host "BUILD COMPLETE"
-          Write-Host "ZIP PATHS VERIFIED FOR DIRECTADMIN"
+          Write-Host "ZIP VERIFIED: $($entries.Count) files, $zipSize bytes"
           Write-Host "Your corrected DirectAdmin ZIP is here: $zipPath"
