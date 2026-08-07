@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatConnectionType } from "@/lib/connections";
@@ -30,6 +31,7 @@ export function EventSignupControls({
   const [connectionId, setConnectionId] = useState(matchingConnections[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const returnTo = `/dashboard/events/${eventId}`;
 
   useEffect(() => {
     let active = true;
@@ -77,6 +79,7 @@ export function EventSignupControls({
   const pendingCompletion = participantStatus === "PENDING";
   const activeParticipant = Boolean(participantStatus && !["PENDING", "WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus));
   const canStartSignup = eventStatus === "SIGNUPS_OPEN" && (!activeParticipant || pendingCompletion);
+  const missingRequiredIdentity = Boolean(requiredConnectionType && !matchingConnections.length);
 
   return (
     <div className="form-stack">
@@ -87,13 +90,22 @@ export function EventSignupControls({
             <select id="signup-connection" value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
               {matchingConnections.map((connection) => <option value={connection.id} key={connection.id}>{connection.display_name ?? connection.handle} (@{connection.handle})</option>)}
             </select>
-          ) : <p className="error-banner">Add a visible {formatConnectionType(requiredConnectionType)} identity on your profile first.</p>}
+          ) : (
+            <div className="identity-required-card">
+              <p><strong>You need a linked {formatConnectionType(requiredConnectionType)} account before you can join this event.</strong></p>
+              <p className="muted">Add it manually on Game identities, or refresh your Discord connections if that account is already connected to Discord.</p>
+              <div className="button-row">
+                <Link className="button" href={`/dashboard/profile?returnTo=${encodeURIComponent(returnTo)}`}>Link account</Link>
+                <a className="button button-secondary" href={`/api/auth/discord/login?returnTo=${encodeURIComponent(returnTo)}`}>Refresh from Discord</a>
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
       {pendingCompletion ? <p className="muted">Your join code was accepted. Select the account you will use and complete your signup.</p> : null}
       {canStartSignup ? (
-        <button className="button" type="button" disabled={busy || (Boolean(requiredConnectionType) && !matchingConnections.length)} onClick={() => run("SIGN_UP")}>
+        <button className="button" type="button" disabled={busy || missingRequiredIdentity} onClick={() => run("SIGN_UP")}>
           {busy ? "Updating…" : pendingCompletion ? "Complete signup" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
         </button>
       ) : null}

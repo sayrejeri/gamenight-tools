@@ -18,10 +18,11 @@ type Connection = {
   is_visible: number;
 };
 
-export function ProfileConnectionsForm({ connections }: { connections: Connection[] }) {
+export function ProfileConnectionsForm({ connections, returnTo }: { connections: Connection[]; returnTo?: string | null }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const refreshReturnTo = returnTo ?? "/dashboard/profile";
 
   async function save(connection: Connection, formData: FormData) {
     setBusyId(connection.id);
@@ -90,6 +91,14 @@ export function ProfileConnectionsForm({ connections }: { connections: Connectio
 
   return (
     <div className="section-stack">
+      <section className="card connection-refresh-card">
+        <div>
+          <h3>Refresh Discord connections</h3>
+          <p className="muted">Re-authorize Discord to refresh your Discord profile, server memberships, and game/service connections. This does not remove your manual identities.</p>
+        </div>
+        <a className="button button-secondary" href={`/api/auth/discord/login?returnTo=${encodeURIComponent(refreshReturnTo)}`}>Refresh from Discord</a>
+      </section>
+
       {connections.length === 0 ? <p className="muted">No game identities have been imported or added yet.</p> : null}
       {connections.map((connection) => {
         const profileUrl = buildConnectionProfileUrl(connection.connection_type, connection.external_id, connection.handle, connection.profile_url);

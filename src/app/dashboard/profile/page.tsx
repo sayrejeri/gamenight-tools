@@ -18,8 +18,16 @@ type ConnectionRow = RowDataPacket & {
 };
 type UserRow = RowDataPacket & { site_username: string | null };
 
-export default async function ProfilePage() {
+function safeReturnTo(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value === "/dashboard" || value.startsWith("/dashboard/")) return value;
+  return null;
+}
+
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ returnTo?: string }> }) {
   const session = await requireSession();
+  const params = await searchParams;
+  const returnTo = safeReturnTo(params.returnTo);
   const [connections, users] = await Promise.all([
     query<ConnectionRow[]>(
       `SELECT id, source, connection_type, external_id, handle, display_name,
@@ -36,11 +44,12 @@ export default async function ProfilePage() {
       <section className="page-heading">
         <div><span className="eyebrow">Your profile</span><h1>Game identities</h1><p>Connections imported from Discord can be changed, hidden, or replaced with your preferred usernames and linked profile pictures.</p></div>
         <div className="button-row">
+          {returnTo ? <Link className="button" href={returnTo}>Return to event</Link> : null}
           <Link className="button button-secondary" href="/dashboard/settings">Profile settings</Link>
-          {users[0]?.site_username ? <Link className="button" href={`/users/${users[0].site_username}`}>View public profile</Link> : null}
+          {users[0]?.site_username ? <Link className="button button-secondary" href={`/users/${users[0].site_username}`}>View public profile</Link> : null}
         </div>
       </section>
-      <ProfileConnectionsForm connections={connections} />
+      <ProfileConnectionsForm connections={connections} returnTo={returnTo} />
     </div>
   );
 }

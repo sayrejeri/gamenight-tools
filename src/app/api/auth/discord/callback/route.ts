@@ -30,6 +30,12 @@ function appUrl(path: string, request: NextRequest): URL {
   return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
 }
 
+function safeReturnTo(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value === "/dashboard" || value.startsWith("/dashboard/")) return value;
+  return null;
+}
+
 async function enrichDiscordConnection(connectionItem: {
   type: string;
   id: string;
@@ -71,6 +77,7 @@ export async function GET(request: NextRequest) {
   const state = url.searchParams.get("state");
   const cookieStore = await cookies();
   const expectedState = cookieStore.get("discord_oauth_state")?.value;
+  const returnTo = safeReturnTo(cookieStore.get("discord_oauth_return_to")?.value);
 
   if (!code || !state || !expectedState || state !== expectedState) {
     return NextResponse.redirect(appUrl("/?authError=invalid_state", request));
@@ -224,10 +231,12 @@ export async function GET(request: NextRequest) {
       avatarHash: user.avatar ?? null,
     });
 
-    const response = NextResponse.redirect(appUrl(needsOnboarding ? "/dashboard/onboarding" : "/dashboard", request));
+    const destination = needsOnboarding ? "/dashboard/onboarding" : (returnTo ?? "/dashboard");
+    const response = NextResponse.redirect(appUrl(destination, request));
     const options = sessionCookieOptions();
     response.cookies.set(options.name, token, options);
     response.cookies.delete("discord_oauth_state");
+    response.cookies.delete("discord_oauth_return_to");
     return response;
   } catch (error) {
     console.error(`Discord OAuth callback failed during ${stage}`, error);
