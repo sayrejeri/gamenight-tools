@@ -1,7 +1,13 @@
-name: Local v0.3.7 verification
+name: Local release verification
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to build
+        required: true
+        default: main
+        type: string
 
 permissions:
   contents: read
@@ -10,31 +16,42 @@ jobs:
   build:
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 60
+    env:
+      TARGET_REF: ${{ inputs.ref }}
     steps:
-      - name: Type-check, build, and package v0.3.7
+      - name: Type-check, build, and package selected ref
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          $work = Join-Path $env:RUNNER_TEMP "gamenight-tools-v0.3.7"
-          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-v037"
+          if ([string]::IsNullOrWhiteSpace($env:TARGET_REF)) { throw "A branch or tag is required." }
+          if ($env:TARGET_REF -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+
+          $safeRef = $env:TARGET_REF.Replace("/", "-")
+          $work = Join-Path $env:RUNNER_TEMP "gamenight-tools-$safeRef"
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-release"
           $releaseRoot = "C:\GameNightToolsRelease"
-          $zipPath = Join-Path $releaseRoot "gamenight-tools-v0.3.7-directadmin.zip"
 
           if (Test-Path $work) { Remove-Item $work -Recurse -Force }
           if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $work, $nodeRoot, $releaseRoot | Out-Null
 
-          Write-Host "Downloading $env:GITHUB_REF_NAME..."
-          git clone --depth 1 --branch "$env:GITHUB_REF_NAME" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+          Write-Host "Downloading $env:TARGET_REF..."
+          git clone --depth 1 --branch "$env:TARGET_REF" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
           Set-Location $work
+
+          if (-not (Test-Path "VERSION")) { throw "VERSION file is missing from $env:TARGET_REF." }
+          $version = (Get-Content "VERSION" -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION has an unexpected value: $version" }
+          $zipPath = Join-Path $releaseRoot "gamenight-tools-v$version-directadmin.zip"
+          $deploymentGuide = "DEPLOYMENT-v$version.md"
 
           Write-Host "Downloading Node.js 22..."
           $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
           $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
           if (-not $nodeVersion) { throw "Could not determine the latest Node.js 22 version." }
-          $nodeZip = Join-Path $env:RUNNER_TEMP "node22-v037.zip"
+          $nodeZip = Join-Path $env:RUNNER_TEMP "node22-release.zip"
           Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip" -OutFile $nodeZip
           Expand-Archive $nodeZip -DestinationPath $nodeRoot -Force
           $nodeDir = Join-Path $nodeRoot "node-$nodeVersion-win-x64"
@@ -52,9 +69,7 @@ jobs:
           Write-Host "Creating production build..."
           npm run build
 
-          if (-not (Test-Path ".next\BUILD_ID")) {
-            throw "Production build finished without .next\BUILD_ID."
-          }
+          if (-not (Test-Path ".next\BUILD_ID")) { throw "Production build finished without .next\BUILD_ID." }
 
           Write-Host "Preparing DirectAdmin package..."
           $deploy = Join-Path $work "deploy"
@@ -64,7 +79,7 @@ jobs:
           Copy-Item "server.js" $deploy
           Copy-Item "package.json" $deploy
           Copy-Item "VERSION" $deploy
-          Copy-Item "DEPLOYMENT-v0.3.7.md" $deploy
+          if (Test-Path $deploymentGuide) { Copy-Item $deploymentGuide $deploy }
           Copy-Item ".next" (Join-Path $deploy ".next") -Recurse -Force
           if (Test-Path "public") { Copy-Item "public" (Join-Path $deploy "public") -Recurse -Force }
 
@@ -102,7 +117,7 @@ jobs:
           try { $entries = @($readArchive.Entries | ForEach-Object { $_.FullName }) }
           finally { $readArchive.Dispose(); $readStream.Dispose() }
 
-          foreach ($required in @(".next/BUILD_ID", "server.js", "package.json", "VERSION", "DEPLOYMENT-v0.3.7.md")) {
+          foreach ($required in @(".next/BUILD_ID", "server.js", "package.json", "VERSION")) {
             if ($entries -notcontains $required) { throw "ZIP verification failed: missing $required" }
           }
           if (@($entries | Where-Object { $_ -match "\\" }).Count -gt 0) { throw "ZIP contains unsafe Windows backslash paths." }
@@ -111,6 +126,8 @@ jobs:
           if ($zipSize -lt 100000) { throw "ZIP is unexpectedly small: $zipSize bytes." }
 
           Write-Host ""
-          Write-Host "V0.3.7 BUILD COMPLETE"
+          Write-Host "RELEASE VERIFICATION COMPLETE"
+          Write-Host "Built ref: $env:TARGET_REF"
+          Write-Host "Version: $version"
           Write-Host "Verified $($entries.Count) files and .next/BUILD_ID"
           Write-Host "DirectAdmin ZIP: $zipPath"
