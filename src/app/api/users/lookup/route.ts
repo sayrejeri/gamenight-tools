@@ -16,13 +16,13 @@ export async function GET(request: NextRequest) {
   const q = request.nextUrl.searchParams.get("q")?.trim().replace(/^@/, "") ?? "";
   if (q.length < 2) return NextResponse.json({ users: [] });
 
-  const like = `%${q.replace(/[\\%_]/g, (value) => `\\${value}`)}%`;
+  const like = `%${q}%`;
   const rows = await query<UserLookupRow[]>(
     `SELECT site_username, username, global_name
      FROM users
-     WHERE site_username LIKE ? ESCAPE '\\\\'
-        OR username LIKE ? ESCAPE '\\\\'
-        OR global_name LIKE ? ESCAPE '\\\\'
+     WHERE site_username LIKE ?
+        OR username LIKE ?
+        OR global_name LIKE ?
      ORDER BY
        CASE
          WHEN LOWER(site_username) = LOWER(?) THEN 0
