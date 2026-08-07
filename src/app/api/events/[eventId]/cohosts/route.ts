@@ -8,7 +8,7 @@ import { getPool, query } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
 
 const inviteSchema = z.object({
-  discordId: z.string().regex(/^\d{15,25}$/),
+  identity: z.string().trim().min(2).max(80),
   permissionLevel: z.enum(["FULL", "BRACKET", "SIGNUPS", "SCOREKEEPER", "ANNOUNCEMENTS", "VIEW_ONLY"]),
   expiresAt: z.string().datetime().nullable().optional(),
 });
@@ -16,6 +16,15 @@ const inviteSchema = z.object({
 type EventAccessRow = RowDataPacket & {
   workspace_id: string;
   primary_host_id: string;
+  name: string;
+};
+
+type ResolvedUserRow = RowDataPacket & {
+  id: string;
+  discord_id: string;
+  username: string;
+  global_name: string | null;
+  site_username: string | null;
 };
 
 export async function POST(
@@ -27,10 +36,10 @@ export async function POST(
 
   const { eventId } = await context.params;
   const parsed = inviteSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Invalid co-host invitation." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Enter a valid site username, Discord username, or Discord ID." }, { status: 400 });
 
   const rows = await query<EventAccessRow[]>(
-    `SELECT workspace_id, primary_host_id FROM events WHERE id = ? LIMIT 1`,
+    `SELECT workspace_id, primary_host_id, name FROM events WHERE id = ? LIMIT 1`,
     [eventId],
   );
   const event = rows[0];
@@ -49,10 +58,37 @@ export async function POST(
     return NextResponse.json({ error: "Only the main host, a full co-host, or server staff can invite co-hosts." }, { status: 403 });
   }
 
-  const [userRows] = await query<(RowDataPacket & { id: string })[]>(
-    `SELECT id FROM users WHERE discord_id = ? LIMIT 1`,
-    [parsed.data.discordId],
+  const identity = parsed.data.identity.replace(/^@/, "").trim();
+  const numericDiscordId = /^\d{15,25}$/.test(identity);
+  const resolvedRows = await query<ResolvedUserRow[]>(
+    `SELECT id, discord_id, username, global_name, site_username
+     FROM users
+     WHERE discord_id = ?
+        OR LOWER(site_username) = LOWER(?)
+        OR LOWER(username) = LOWER(?)
+     ORDER BY
+       CASE
+         WHEN discord_id = ? THEN 0
+         WHEN LOWER(site_username) = LOWER(?) THEN 1
+         WHEN LOWER(username) = LOWER(?) THEN 2
+         ELSE 3
+       END
+     LIMIT 1`,
+    [identity, identity, identity, identity, identity, identity],
   );
+  const invitedUser = resolvedRows[0] ?? null;
+
+  if (!invitedUser && !numericDiscordId) {
+    return NextResponse.json(
+      { error: "That user has not signed into Game Night Tools yet. Use their numeric Discord ID to create a pending invitation." },
+      { status: 404 },
+    );
+  }
+
+  const discordId = invitedUser?.discord_id ?? identity;
+  if (discordId === session.discordId) {
+    return NextResponse.json({ error: "You cannot invite yourself as a co-host." }, { status: 409 });
+  }
 
   const invitationId = randomUUID();
   await getPool().execute(
@@ -69,23 +105,40 @@ export async function POST(
     [
       invitationId,
       eventId,
-      userRows[0]?.id ?? null,
-      parsed.data.discordId,
+      invitedUser?.id ?? null,
+      discordId,
       parsed.data.permissionLevel,
       session.userId,
       parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
     ],
   );
 
+  if (invitedUser) {
+    await getPool().execute(
+      `INSERT INTO notifications
+        (id, user_id, notification_type, category, title, message, action_url)
+       VALUES (?, ?, 'COHOST_INVITE', 'EVENTS', 'Co-host invitation', ?, ?)`,
+      [
+        randomUUID(),
+        invitedUser.id,
+        `You were invited to co-host ${event.name} with ${parsed.data.permissionLevel.replaceAll("_", " ").toLowerCase()} access.`,
+        "/dashboard",
+      ],
+    );
+  }
+
   await writeAuditLog({
     actorUserId: session.userId,
     workspaceId: event.workspace_id,
     eventId,
     action: "event.cohost_invited",
-    targetType: "discord_user",
-    targetId: parsed.data.discordId,
-    details: { permissionLevel: parsed.data.permissionLevel },
+    targetType: invitedUser ? "user" : "discord_user",
+    targetId: invitedUser?.id ?? discordId,
+    details: { permissionLevel: parsed.data.permissionLevel, discordId },
   });
 
-  return NextResponse.json({ success: true }, { status: 201 });
+  return NextResponse.json({
+    success: true,
+    invitedName: invitedUser ? (invitedUser.global_name ?? invitedUser.site_username ?? invitedUser.username) : null,
+  }, { status: 201 });
 }
