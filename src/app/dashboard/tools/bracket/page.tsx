@@ -8,7 +8,7 @@ import type { Participant } from "@/components/bracket/bracket-model";
 
 type EventRow = RowDataPacket & { id: string; workspace_id: string; name: string; primary_host_id: string; bracket_enabled: number; bracket_require_check_in: number };
 type ParticipantRow = RowDataPacket & { user_id: string; display_name: string };
-type BracketRow = RowDataPacket & { settings_json: string | null; status: BracketStatus };
+type BracketRow = RowDataPacket & { settings_json: string | null; status: BracketStatus; updated_at: Date };
 
 export default async function BracketToolPage({ searchParams }: { searchParams: Promise<{ eventId?: string }> }) {
   const session = await requireSession();
@@ -17,6 +17,7 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
   let initialParticipants: Participant[] = [];
   let initialDraft: unknown = null;
   let initialStatus: BracketStatus = "DRAFT";
+  let initialUpdatedAt: string | null = null;
   let eventName: string | null = null;
   let accessError: string | null = null;
 
@@ -41,11 +42,12 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
           [eventId, event.bracket_require_check_in ? 1 : 0],
         );
         initialParticipants = participants.map((participant) => ({ id: `user-${participant.user_id}`, name: participant.display_name }));
-        const brackets = await query<BracketRow[]>(`SELECT settings_json, status FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]);
+        const brackets = await query<BracketRow[]>(`SELECT settings_json, status, updated_at FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]);
         if (brackets[0]?.settings_json) {
           try { initialDraft = JSON.parse(brackets[0].settings_json); } catch { initialDraft = null; }
         }
         initialStatus = brackets[0]?.status ?? "DRAFT";
+        initialUpdatedAt = brackets[0]?.updated_at ? new Date(brackets[0].updated_at).toISOString() : null;
       }
     }
   }
@@ -54,11 +56,11 @@ export default async function BracketToolPage({ searchParams }: { searchParams: 
   return (
     <div className="section-stack">
       <section className="page-heading">
-        <div><span className="eyebrow">{eventName ? "Shared event bracket" : "Standalone tool"}</span><h1>Bracket generator</h1><p>Create a single-elimination or custom three-player bracket, choose winners as matches finish, publish event brackets live, and export the result as a PNG.</p></div>
-        {eventId ? <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/bracket`}>View bracket</Link></div> : null}
+        <div><span className="eyebrow">{eventName ? "Shared event bracket" : "Standalone tool"}</span><h1>Bracket generator</h1><p>Create a single-elimination or custom three-player bracket, prepare placement before going live, and export the result as a PNG. Live match results are managed in Match Center.</p></div>
+        {eventId ? <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/bracket`}>View bracket</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/matches`}>Match Center</Link></div> : null}
       </section>
       {eventId && initialParticipants.length === 0 ? <div className="error-banner">No eligible participants are ready yet. Approve signups{eventName ? " and complete any required check-in" : ""}, then return here.</div> : null}
-      <BracketGenerator eventId={eventId} initialTitle={initialTitle} initialParticipants={initialParticipants} initialDraft={initialDraft} initialStatus={initialStatus} />
+      <BracketGenerator eventId={eventId} initialTitle={initialTitle} initialParticipants={initialParticipants} initialDraft={initialDraft} initialStatus={initialStatus} initialUpdatedAt={initialUpdatedAt} />
     </div>
   );
 }

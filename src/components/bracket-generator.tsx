@@ -38,6 +38,7 @@ export function BracketGenerator({
   initialParticipants,
   initialDraft,
   initialStatus = "DRAFT",
+  initialUpdatedAt = null,
 }: {
   eventId?: string;
   initialTitle?: string;
@@ -45,6 +46,7 @@ export function BracketGenerator({
   initialParticipants?: Participant[];
   initialDraft?: unknown;
   initialStatus?: BracketStatus;
+  initialUpdatedAt?: string | null;
 }) {
   const saved = isDraft(initialDraft) ? initialDraft : null;
   const seededParticipants = initialParticipants?.length
@@ -62,6 +64,7 @@ export function BracketGenerator({
   const [winners, setWinners] = useState<WinnerMap>(saved?.winners ?? {});
   const [threeWinners, setThreeWinners] = useState<ThreeWinnerMap>(saved?.threeWinners ?? {});
   const [bracketStatus, setBracketStatus] = useState<BracketStatus>(initialStatus);
+  const [bracketUpdatedAt, setBracketUpdatedAt] = useState<string | null>(initialUpdatedAt);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [changingStatus, setChangingStatus] = useState(false);
@@ -70,7 +73,7 @@ export function BracketGenerator({
   const champion = rounds.at(-1)?.[0]?.winner ?? null;
   const three = useMemo(() => resolveThreePlayerAdvancement(participants, threeWinners), [participants, threeWinners]);
   const { playerA, playerB, playerC, m1Winner, m1Loser, m2Winner, m3Winner, champion: threeChampion, reason: threeReason } = three;
-  const bracketLocked = Boolean(eventId && bracketStatus === "COMPLETED");
+  const bracketLocked = Boolean(eventId && (bracketStatus === "LIVE" || bracketStatus === "COMPLETED"));
   const hasFinalResult = format === "single" ? Boolean(champion) : Boolean(threeChampion);
 
   function clearResults() {
@@ -167,8 +170,12 @@ export function BracketGenerator({
       setMessage("This standalone bracket can be exported as a PNG. Open it from an event to share a saved bracket with co-hosts.");
       return;
     }
-    if (bracketLocked) {
-      setMessage("This bracket is completed. Reopen it before editing or saving new results.");
+    if (bracketStatus === "LIVE") {
+      setMessage("This bracket is live. Use Match Center for results, forfeits, disputes, or corrections.");
+      return;
+    }
+    if (bracketStatus === "COMPLETED") {
+      setMessage("This bracket is completed. Reopen it before editing placement.");
       return;
     }
     if (format === "single" && !firstRound.length) {
@@ -186,14 +193,14 @@ export function BracketGenerator({
           format: format === "single" ? "SINGLE_ELIMINATION" : "THREE_PLAYER",
           seedingMode: seedingMode.toUpperCase(),
           state: currentDraft(),
+          expectedUpdatedAt: bracketUpdatedAt,
         }),
       });
-      const body = (await response.json()) as { error?: string; status?: BracketStatus };
+      const body = (await response.json()) as { error?: string; status?: BracketStatus; updatedAt?: string };
       if (!response.ok) throw new Error(body.error ?? "The bracket could not be saved.");
       if (body.status) setBracketStatus(body.status);
-      setMessage(body.status === "LIVE"
-        ? "Live bracket updated. Spectators can see the latest saved results."
-        : "Bracket saved. Co-hosts with bracket permission can continue it from this event.");
+      if (body.updatedAt) setBracketUpdatedAt(body.updatedAt);
+      setMessage("Bracket saved. Co-hosts with bracket permission can continue it from this event.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The bracket could not be saved.");
     } finally {
@@ -204,7 +211,7 @@ export function BracketGenerator({
   async function changeBracketStatus(status: Exclude<BracketStatus, "DRAFT">) {
     if (!eventId) return;
     if (status === "COMPLETED" && !hasFinalResult) {
-      setMessage("Finish every required match before marking the bracket completed.");
+      setMessage("Finish every required match in Match Center before marking the bracket completed.");
       return;
     }
     if (bracketStatus === "DRAFT") {
@@ -220,14 +227,15 @@ export function BracketGenerator({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      const body = (await response.json()) as { error?: string; status?: BracketStatus };
+      const body = (await response.json()) as { error?: string; status?: BracketStatus; updatedAt?: string };
       if (!response.ok) throw new Error(body.error ?? "The bracket status could not be changed.");
       setBracketStatus(body.status ?? status);
+      if (body.updatedAt) setBracketUpdatedAt(body.updatedAt);
       setMessage(status === "LIVE"
-        ? "Bracket is live. Save after each result so spectators see the newest matches."
+        ? "Bracket is live. Use Match Center to run matches and record every result."
         : status === "COMPLETED"
-          ? "Bracket completed and locked. Reopen it if a result needs to be corrected."
-          : "Bracket reopened for editing.");
+          ? "Bracket completed and locked. Reopen it if placement needs to be prepared again."
+          : "Bracket reopened for setup. Match results should still be handled in Match Center once it goes live again.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The bracket status could not be changed.");
     } finally {
@@ -263,7 +271,7 @@ export function BracketGenerator({
           <div><span className="eyebrow">Event bracket status</span><strong>{bracketStatus.replaceAll("_", " ")}</strong></div>
           <p>{bracketStatus === "DRAFT" ? "Generate and save the bracket before publishing it."
             : bracketStatus === "GENERATED" ? "Saved for staff. Publish it when participants are ready to follow along."
-              : bracketStatus === "LIVE" ? "Spectators can view the latest saved results from the event page."
+              : bracketStatus === "LIVE" ? "The bracket is live. Match Center now owns tournament results and corrections."
                 : "Final results are locked and the completed bracket remains available to view."}</p>
         </section>
       ) : null}
@@ -272,9 +280,9 @@ export function BracketGenerator({
         <div className="section-header">
           <div>
             <h2>Bracket setup</h2>
-            <p>Enter participant names, choose host placement or random placement, and generate the bracket.</p>
+            <p>Enter participant names, choose host placement or random placement, and generate the bracket before it goes live.</p>
           </div>
-          {bracketLocked ? <span className="badge">Locked</span> : null}
+          {bracketLocked ? <span className="badge">{bracketStatus === "LIVE" ? "Live · Match Center" : "Locked"}</span> : null}
         </div>
 
         <div className="two-column">
@@ -363,6 +371,7 @@ export function BracketGenerator({
           {eventId && bracketStatus === "LIVE" ? <button className="button" type="button" disabled={changingStatus || !hasFinalResult} onClick={() => changeBracketStatus("COMPLETED")}>Mark completed</button> : null}
           {eventId && bracketStatus === "COMPLETED" ? <button className="button button-secondary" type="button" disabled={changingStatus} onClick={() => changeBracketStatus("GENERATED")}>Reopen bracket</button> : null}
         </div>
+        {bracketStatus === "LIVE" && eventId ? <p className="muted">Need to enter a winner, correct a score, handle a no-show, or reopen a match? Use Match Center so the action is confirmed and audited.</p> : null}
         {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
       </section>
 
@@ -371,7 +380,7 @@ export function BracketGenerator({
           <div className="section-header">
             <div>
               <h2>Single-elimination bracket</h2>
-              <p>Select each match winner to advance them automatically. First-round byes advance automatically; unfinished later-round slots remain TBD.</p>
+              <p>{bracketStatus === "LIVE" ? "Live results are read-only here. Use Match Center to operate each match." : "Select each match winner while preparing the bracket. First-round byes advance automatically; unfinished later-round slots remain TBD."}</p>
             </div>
             {champion ? <span className="badge">Champion: {champion.name}</span> : null}
           </div>
@@ -415,7 +424,7 @@ export function BracketGenerator({
           <div className="section-header">
             <div>
               <h2>Three-player bracket</h2>
-              <p>Select the winner of each available match in order.</p>
+              <p>{bracketStatus === "LIVE" ? "Live results are read-only here. Use Match Center to run all three matches." : "Select the winner of each available match while preparing or testing the bracket."}</p>
             </div>
             {threeChampion ? <span className="badge">Advances: {threeChampion.name}</span> : null}
           </div>

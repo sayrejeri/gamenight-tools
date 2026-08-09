@@ -7,7 +7,7 @@ import { hasWorkspacePermission } from "@/lib/permissions";
 import { encryptWebhookUrl, isDiscordWebhookUrl, webhookUrlHint } from "@/lib/webhooks";
 import { writeAuditLog } from "@/lib/audit";
 
-const notificationType = z.enum(["EVENT_PUBLISHED", "SIGNUPS_CLOSED", "CHECK_IN_OPEN", "EVENT_LIVE", "EVENT_COMPLETED", "EVENT_CANCELLED", "BRACKET_PUBLISHED", "SUGGESTION_UPDATE", "COMMUNITY_ANNOUNCEMENT"]);
+const notificationType = z.enum(["EVENT_PUBLISHED", "SIGNUPS_CLOSED", "CHECK_IN_OPEN", "EVENT_LIVE", "EVENT_COMPLETED", "EVENT_CANCELLED", "BRACKET_PUBLISHED", "MATCH_UPDATE", "SUGGESTION_UPDATE", "COMMUNITY_ANNOUNCEMENT"]);
 const baseSchema = z.object({
   label: z.string().trim().min(2).max(100),
   notificationTypes: z.array(notificationType).max(20),
