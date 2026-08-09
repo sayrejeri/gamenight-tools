@@ -168,12 +168,13 @@ export async function POST(
 
     await connection.execute(
       `INSERT INTO event_participants
-        (event_id, user_id, status, game_identity_type, game_identity_value)
-       VALUES (?, ?, ?, ?, ?)
+        (event_id, user_id, status, game_identity_type, game_identity_value, signup_completed_at)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))
        ON DUPLICATE KEY UPDATE
          status = IF(status IN ('WITHDRAWN', 'PENDING', 'WAITLISTED'), VALUES(status), status),
          game_identity_type = VALUES(game_identity_type),
-         game_identity_value = VALUES(game_identity_value)`,
+         game_identity_value = VALUES(game_identity_value),
+         signup_completed_at = VALUES(signup_completed_at)`,
       [
         eventId,
         session.userId,
