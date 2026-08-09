@@ -11,20 +11,14 @@ import "./admin-moderation.css";
 import "./mobile-navigation.css";
 import "./request-form.css";
 import "./v037.css";
+import "./v038.css";
 
 export const metadata: Metadata = {
-  title: {
-    default: "Game Night Tools",
-    template: "%s · Game Night Tools",
-  },
+  title: { default: "Game Night Tools", template: "%s · Game Night Tools" },
   description: "Discord-powered events, teams, community profiles, suggestions, tools, and server workspaces.",
   applicationName: "Game Night Tools",
   manifest: "/manifest.webmanifest",
-  icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
-    apple: "/icon.svg",
-  },
+  icons: { icon: "/icon.svg", shortcut: "/icon.svg", apple: "/icon.svg" },
   openGraph: {
     title: "Game Night Tools",
     description: "Run game nights, build teams, manage communities, and organize events from one Discord-connected platform.",
@@ -33,9 +27,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
+  return <html lang="en"><body>{children}</body></html>;
 }
