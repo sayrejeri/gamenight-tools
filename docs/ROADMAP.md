@@ -1,40 +1,40 @@
 # Product roadmap
 
-## Phase 1 — Foundation (current)
+## Shipped foundation
 
 - Required Discord login using `identify`, `guilds`, and `connections`
 - Automatic detection of registered Discord server workspaces
 - Platform owner creation of server profiles and assignment of owner Discord IDs
 - Workspace owners, admins, staff, approved hosts, referees, and viewers
 - Staff, host, and event codes with expiration and configurable use limits
-- Event creation and staff-approval foundation
-- Co-host invitations with accept/decline and scoped permissions
+- Event creation, staff approval, co-host permissions, signups, check-in, waitlists, and participant management
 - Imported and manually editable game identities
-- Shared event bracket drafts and PNG bracket export
-- Single-elimination and custom three-player advancement bracket modes
-- Audit-log and reminder database foundation
+- Community chat, announcements, notifications, suggestions, templates, and event-hosting QOL
 
-## Phase 2 — Signup and event operations
+## v0.5 — Competitive Events
 
-- Custom built-in signup form builder
-- Signup questions and rule acknowledgements
-- Approval, rejection, withdrawal, waitlist, and participant limits
-- Check-in windows, no-shows, and automatic waitlist promotion
-- Import approved signups directly into the event bracket
-- Public participant-facing event page
-- Website notification center
-- Event status controls and staff approval actions
+- Single-elimination brackets with automatic byes and winner advancement
+- Custom three-player advancement with the no-rematch A/B/C rule
+- Random placement or host-controlled placement
+- Approved event participants imported with linked Game Night Tools user IDs
+- Shared bracket state for hosts and bracket-enabled co-hosts
+- Normalized `bracket_entries` and `bracket_matches` persistence alongside the saved visual state
+- Bracket lifecycle: generated, live, completed, and reopen for corrections
+- Read-only live/completed bracket viewing from the event page
+- Completed bracket locking and audited status changes
+- PNG bracket export
 
-## Phase 3 — Tournament operations
+## Next — Tournament operations
 
-- Persist normalized bracket entries and matches in addition to saved draft JSON
-- Match scheduling, result confirmation, disputes, proof uploads, and forfeits
-- Staff overrides with required reasons and complete audit history
-- Live public bracket and spectator view
+- Match scheduling and ready checks
+- Result confirmation between players/teams
+- Disputes, proof uploads, forfeits, and staff overrides with required reasons
+- More detailed match scoring and game/map results
+- Public share links for events that explicitly allow anonymous spectators
 - Round robin, double elimination, groups-to-playoffs, and team brackets
 - Scoreboards, timers, player picker, team generator, and game/map picker
 
-## Phase 4 — Optional Discord bot
+## Later — Optional Discord bot
 
 - Bot installation remains optional
 - Opt-in Discord DM reminders
@@ -43,7 +43,7 @@
 - Optional role synchronization and temporary match channels
 - Clear failure handling when Discord privacy settings block DMs
 
-## Phase 5 — Community history
+## Later — Community history
 
 - Server leaderboards and game-specific statistics
 - Player profiles, attendance, no-show history, wins, losses, and streaks

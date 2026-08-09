@@ -7,6 +7,7 @@ import {
   getMatchSlotLabel,
   isDraft,
   makeParticipant,
+  resolveThreePlayerAdvancement,
   shuffle,
   type BracketDraft,
   type DerivedMatch,
@@ -17,6 +18,8 @@ import {
 } from "@/components/bracket/bracket-model";
 import { downloadBracketPng } from "@/components/bracket/bracket-export";
 import { ThreeMatch } from "@/components/bracket/three-match";
+
+export type BracketStatus = "DRAFT" | "GENERATED" | "LIVE" | "COMPLETED";
 
 function duplicateParticipantName(participants: Participant[]): string | null {
   const seen = new Set<string>();
@@ -32,53 +35,52 @@ export function BracketGenerator({
   eventId,
   initialTitle,
   initialNames,
+  initialParticipants,
   initialDraft,
+  initialStatus = "DRAFT",
 }: {
   eventId?: string;
   initialTitle?: string;
   initialNames?: string[];
+  initialParticipants?: Participant[];
   initialDraft?: unknown;
+  initialStatus?: BracketStatus;
 }) {
   const saved = isDraft(initialDraft) ? initialDraft : null;
-  const seededNames = initialNames?.length ? initialNames : Array.from({ length: 8 }, (_, index) => `Player ${index + 1}`);
-  const initialParticipants = saved?.participants ?? seededNames.map((name, index) => makeParticipant(index, name));
+  const seededParticipants = initialParticipants?.length
+    ? initialParticipants
+    : initialNames?.length
+      ? initialNames.map((name, index) => makeParticipant(index, name))
+      : Array.from({ length: 8 }, (_, index) => makeParticipant(index, `Player ${index + 1}`));
+  const startingParticipants = saved?.participants ?? seededParticipants;
 
   const [title, setTitle] = useState(saved?.title ?? initialTitle ?? "Game Night Tournament");
   const [format, setFormat] = useState<"single" | "three">(saved?.format ?? "single");
   const [seedingMode, setSeedingMode] = useState<"manual" | "random">(saved?.seedingMode ?? "random");
-  const [participants, setParticipants] = useState<Participant[]>(initialParticipants);
+  const [participants, setParticipants] = useState<Participant[]>(startingParticipants);
   const [firstRound, setFirstRound] = useState<Pair[]>(saved?.firstRound ?? []);
   const [winners, setWinners] = useState<WinnerMap>(saved?.winners ?? {});
   const [threeWinners, setThreeWinners] = useState<ThreeWinnerMap>(saved?.threeWinners ?? {});
+  const [bracketStatus, setBracketStatus] = useState<BracketStatus>(initialStatus);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [changingStatus, setChangingStatus] = useState(false);
 
   const rounds = useMemo(() => deriveSingleElimination(firstRound, winners), [firstRound, winners]);
   const champion = rounds.at(-1)?.[0]?.winner ?? null;
+  const three = useMemo(() => resolveThreePlayerAdvancement(participants, threeWinners), [participants, threeWinners]);
+  const { playerA, playerB, playerC, m1Winner, m1Loser, m2Winner, m3Winner, champion: threeChampion, reason: threeReason } = three;
+  const bracketLocked = Boolean(eventId && bracketStatus === "COMPLETED");
+  const hasFinalResult = format === "single" ? Boolean(champion) : Boolean(threeChampion);
 
-  const activeThree = participants.slice(0, 3);
-  const [playerA, playerB, playerC] = activeThree;
-  const m1Winner = activeThree.find((player) => player.id === threeWinners.m1) ?? null;
-  const m1Loser = m1Winner ? (m1Winner.id === playerA?.id ? playerB : playerA) : null;
-  const m2Winner = [playerC, m1Loser].find((player) => player?.id === threeWinners.m2) ?? null;
-  const m3Winner = [playerC, m1Winner].find((player) => player?.id === threeWinners.m3) ?? null;
-  let threeChampion: Participant | null = null;
-  let threeReason = "Complete all three matches to calculate who advances.";
-
-  if (m1Winner && m1Loser && m2Winner && m3Winner && playerC) {
-    if (m2Winner.id === playerC.id) {
-      threeChampion = m3Winner;
-      threeReason = `${m1Loser.name} lost both opening matches. The winner of ${m1Winner.name} vs ${playerC.name} advances.`;
-    } else if (m3Winner.id === playerC.id) {
-      threeChampion = playerC;
-      threeReason = `${playerC.name} defeated the first-match winner, so ${playerC.name} advances under the three-player rule.`;
-    } else {
-      threeChampion = m1Loser;
-      threeReason = `${m1Winner.name} won the final listed match, so ${m1Loser.name} advances under the event's custom overall-result rule.`;
-    }
+  function clearResults() {
+    setFirstRound([]);
+    setWinners({});
+    setThreeWinners({});
   }
 
   function setParticipantCount(nextCount: number) {
+    if (bracketLocked) return;
     const count = Math.min(128, Math.max(format === "three" ? 3 : 2, nextCount));
     setParticipants((current) => {
       if (current.length === count) return current;
@@ -88,12 +90,11 @@ export function BracketGenerator({
         ...Array.from({ length: count - current.length }, (_, index) => makeParticipant(current.length + index)),
       ];
     });
-    setFirstRound([]);
-    setWinners({});
-    setThreeWinners({});
+    clearResults();
   }
 
   function updateName(id: string, name: string) {
+    if (bracketLocked) return;
     setParticipants((current) => current.map((participant) => participant.id === id ? { ...participant, name } : participant));
     setFirstRound((current) => current.map(([a, b]) => [
       a?.id === id ? { ...a, name } : a,
@@ -102,26 +103,24 @@ export function BracketGenerator({
   }
 
   function moveParticipant(index: number, direction: -1 | 1) {
+    if (bracketLocked) return;
     const target = index + direction;
     if (target < 0 || target >= participants.length) return;
     const next = [...participants];
     [next[index], next[target]] = [next[target], next[index]];
     setParticipants(next);
-    setFirstRound([]);
-    setWinners({});
-    setThreeWinners({});
+    clearResults();
   }
 
   function generate() {
+    if (bracketLocked) return;
     const cleaned = participants.map((participant, index) => ({
       ...participant,
       name: participant.name.trim() || `Player ${index + 1}`,
     }));
     const duplicateName = duplicateParticipantName(cleaned);
     if (duplicateName) {
-      setFirstRound([]);
-      setWinners({});
-      setThreeWinners({});
+      clearResults();
       setMessage(`“${duplicateName}” appears more than once. Give every participant a unique name before generating the bracket.`);
       return;
     }
@@ -146,7 +145,7 @@ export function BracketGenerator({
   }
 
   function chooseWinner(match: DerivedMatch, participant: Participant) {
-    if (!match.a || !match.b || !match.aReady || !match.bReady) return;
+    if (bracketLocked || !match.a || !match.b || !match.aReady || !match.bReady) return;
     setWinners((current) => ({ ...current, [match.id]: participant.id }));
   }
 
@@ -165,7 +164,15 @@ export function BracketGenerator({
 
   async function saveDraft() {
     if (!eventId) {
-      setMessage("This standalone bracket can be exported as a PNG. Open it from an event to share a saved draft with co-hosts.");
+      setMessage("This standalone bracket can be exported as a PNG. Open it from an event to share a saved bracket with co-hosts.");
+      return;
+    }
+    if (bracketLocked) {
+      setMessage("This bracket is completed. Reopen it before editing or saving new results.");
+      return;
+    }
+    if (format === "single" && !firstRound.length) {
+      setMessage("Generate the bracket before saving it to the event.");
       return;
     }
 
@@ -181,13 +188,50 @@ export function BracketGenerator({
           state: currentDraft(),
         }),
       });
-      const body = (await response.json()) as { error?: string };
+      const body = (await response.json()) as { error?: string; status?: BracketStatus };
       if (!response.ok) throw new Error(body.error ?? "The bracket could not be saved.");
-      setMessage("Bracket draft saved. Co-hosts with bracket permission can open the same event and continue it.");
+      if (body.status) setBracketStatus(body.status);
+      setMessage(body.status === "LIVE"
+        ? "Live bracket updated. Spectators can see the latest saved results."
+        : "Bracket saved. Co-hosts with bracket permission can continue it from this event.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The bracket could not be saved.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function changeBracketStatus(status: Exclude<BracketStatus, "DRAFT">) {
+    if (!eventId) return;
+    if (status === "COMPLETED" && !hasFinalResult) {
+      setMessage("Finish every required match before marking the bracket completed.");
+      return;
+    }
+    if (bracketStatus === "DRAFT") {
+      setMessage("Save the bracket before publishing it.");
+      return;
+    }
+
+    setChangingStatus(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/bracket`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const body = (await response.json()) as { error?: string; status?: BracketStatus };
+      if (!response.ok) throw new Error(body.error ?? "The bracket status could not be changed.");
+      setBracketStatus(body.status ?? status);
+      setMessage(status === "LIVE"
+        ? "Bracket is live. Save after each result so spectators see the newest matches."
+        : status === "COMPLETED"
+          ? "Bracket completed and locked. Reopen it if a result needs to be corrected."
+          : "Bracket reopened for editing.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The bracket status could not be changed.");
+    } finally {
+      setChangingStatus(false);
     }
   }
 
@@ -199,9 +243,9 @@ export function BracketGenerator({
       participants,
       rounds,
       champion,
-      playerA,
-      playerB,
-      playerC,
+      playerA: playerA ?? undefined,
+      playerB: playerB ?? undefined,
+      playerC: playerC ?? undefined,
       m1Winner,
       m1Loser,
       m2Winner,
@@ -214,31 +258,41 @@ export function BracketGenerator({
 
   return (
     <div className="section-stack">
+      {eventId ? (
+        <section className={`competitive-status competitive-status-${bracketStatus.toLowerCase()}`}>
+          <div><span className="eyebrow">Event bracket status</span><strong>{bracketStatus.replaceAll("_", " ")}</strong></div>
+          <p>{bracketStatus === "DRAFT" ? "Generate and save the bracket before publishing it."
+            : bracketStatus === "GENERATED" ? "Saved for staff. Publish it when participants are ready to follow along."
+              : bracketStatus === "LIVE" ? "Spectators can view the latest saved results from the event page."
+                : "Final results are locked and the completed bracket remains available to view."}</p>
+        </section>
+      ) : null}
+
       <section className="panel section-stack">
         <div className="section-header">
           <div>
             <h2>Bracket setup</h2>
             <p>Enter participant names, choose host placement or random placement, and generate the bracket.</p>
           </div>
+          {bracketLocked ? <span className="badge">Locked</span> : null}
         </div>
 
         <div className="two-column">
           <div className="form-stack compact">
             <label htmlFor="bracket-title">Bracket title</label>
-            <input id="bracket-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} />
+            <input id="bracket-title" value={title} disabled={bracketLocked} onChange={(event) => setTitle(event.target.value)} maxLength={100} />
           </div>
           <div className="form-stack compact">
             <label htmlFor="bracket-format">Format</label>
             <select
               id="bracket-format"
               value={format}
+              disabled={bracketLocked}
               onChange={(event) => {
                 const next = event.target.value as "single" | "three";
                 setFormat(next);
                 if (next === "three") setParticipantCount(3);
-                setFirstRound([]);
-                setWinners({});
-                setThreeWinners({});
+                clearResults();
               }}
             >
               <option value="single">Single elimination</option>
@@ -256,13 +310,13 @@ export function BracketGenerator({
               min={format === "three" ? 3 : 2}
               max={format === "three" ? 3 : 128}
               value={participants.length}
-              disabled={format === "three"}
+              disabled={bracketLocked || format === "three"}
               onChange={(event) => setParticipantCount(Number(event.target.value))}
             />
           </div>
           <div className="form-stack compact">
             <label htmlFor="placement-mode">Placement</label>
-            <select id="placement-mode" value={seedingMode} onChange={(event) => setSeedingMode(event.target.value as "manual" | "random")}>
+            <select id="placement-mode" value={seedingMode} disabled={bracketLocked} onChange={(event) => setSeedingMode(event.target.value as "manual" | "random")}>
               <option value="random">System chooses randomly</option>
               <option value="manual">Host chooses using the order below</option>
             </select>
@@ -276,13 +330,14 @@ export function BracketGenerator({
               <input
                 aria-label={`Participant ${index + 1}`}
                 value={participant.name}
+                disabled={bracketLocked}
                 onChange={(event) => updateName(participant.id, event.target.value)}
                 maxLength={80}
               />
               {seedingMode === "manual" ? (
                 <div className="order-buttons">
-                  <button className="button button-secondary" type="button" disabled={index === 0} onClick={() => moveParticipant(index, -1)} aria-label={`Move ${participant.name} up`}>↑</button>
-                  <button className="button button-secondary" type="button" disabled={index === participants.length - 1} onClick={() => moveParticipant(index, 1)} aria-label={`Move ${participant.name} down`}>↓</button>
+                  <button className="button button-secondary" type="button" disabled={bracketLocked || index === 0} onClick={() => moveParticipant(index, -1)} aria-label={`Move ${participant.name} up`}>↑</button>
+                  <button className="button button-secondary" type="button" disabled={bracketLocked || index === participants.length - 1} onClick={() => moveParticipant(index, 1)} aria-label={`Move ${participant.name} down`}>↓</button>
                 </div>
               ) : null}
             </div>
@@ -301,9 +356,12 @@ export function BracketGenerator({
         ) : null}
 
         <div className="button-row">
-          <button className="button" type="button" onClick={generate}>Generate bracket</button>
-          <button className="button button-secondary" type="button" onClick={saveDraft} disabled={saving}>{saving ? "Saving…" : eventId ? "Save shared draft" : "Save draft"}</button>
+          <button className="button" type="button" onClick={generate} disabled={bracketLocked}>Generate bracket</button>
+          <button className="button button-secondary" type="button" onClick={saveDraft} disabled={saving || bracketLocked}>{saving ? "Saving…" : eventId ? "Save bracket" : "Save draft"}</button>
           <button className="button button-secondary" type="button" onClick={downloadPng}>Download PNG</button>
+          {eventId && bracketStatus === "GENERATED" ? <button className="button" type="button" disabled={changingStatus} onClick={() => changeBracketStatus("LIVE")}>Publish live</button> : null}
+          {eventId && bracketStatus === "LIVE" ? <button className="button" type="button" disabled={changingStatus || !hasFinalResult} onClick={() => changeBracketStatus("COMPLETED")}>Mark completed</button> : null}
+          {eventId && bracketStatus === "COMPLETED" ? <button className="button button-secondary" type="button" disabled={changingStatus} onClick={() => changeBracketStatus("GENERATED")}>Reopen bracket</button> : null}
         </div>
         {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
       </section>
@@ -334,7 +392,7 @@ export function BracketGenerator({
                               className={`match-participant${isWinner ? " winner" : ""}${!participant ? " bye" : ""}`}
                               key={`${match.id}-${slot}`}
                               type="button"
-                              disabled={!participant || !isSelectable}
+                              disabled={bracketLocked || !participant || !isSelectable}
                               onClick={() => participant && chooseWinner(match, participant)}
                             >
                               <span>{participant?.name ?? getMatchSlotLabel(match, slotName)}</span>
@@ -352,7 +410,7 @@ export function BracketGenerator({
         </section>
       ) : null}
 
-      {format === "three" && activeThree.length === 3 ? (
+      {format === "three" && participants.length === 3 ? (
         <section className="panel section-stack">
           <div className="section-header">
             <div>
@@ -368,6 +426,7 @@ export function BracketGenerator({
               a={playerA}
               b={playerB}
               winner={m1Winner}
+              disabled={bracketLocked}
               onChoose={(participant) => setThreeWinners({ m1: participant.id })}
             />
             <ThreeMatch
@@ -375,6 +434,7 @@ export function BracketGenerator({
               a={playerC}
               b={m1Loser}
               winner={m2Winner}
+              disabled={bracketLocked}
               onChoose={(participant) => setThreeWinners((current) => ({ m1: current.m1, m2: participant.id }))}
             />
             <ThreeMatch
@@ -382,6 +442,7 @@ export function BracketGenerator({
               a={playerC}
               b={m1Winner}
               winner={m3Winner}
+              disabled={bracketLocked}
               onChoose={(participant) => setThreeWinners((current) => ({ ...current, m3: participant.id }))}
             />
           </div>
