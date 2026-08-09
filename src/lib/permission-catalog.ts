@@ -16,6 +16,7 @@ export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 export const WORKSPACE_PERMISSIONS = [
   "HOST_EVENTS",
   "MANAGE_EVENTS",
+  "APPROVE_EVENTS",
   "MANAGE_PARTICIPANTS",
   "MANAGE_BRACKETS",
   "MANAGE_TEAMS",
@@ -55,6 +56,7 @@ export const PLATFORM_PERMISSION_INFO: Record<PlatformPermission, { label: strin
 export const WORKSPACE_PERMISSION_INFO: Record<WorkspacePermission, { label: string; description: string; risk?: "high" }> = {
   HOST_EVENTS: { label: "Host events", description: "Create and host game-night events for this server." },
   MANAGE_EVENTS: { label: "Manage events", description: "Edit event settings, stages, templates, and announcements." },
+  APPROVE_EVENTS: { label: "Approve events", description: "Approve host-submitted events before signups open." },
   MANAGE_PARTICIPANTS: { label: "Manage participants", description: "Approve, remove, check in, or update event participants." },
   MANAGE_BRACKETS: { label: "Manage brackets", description: "Create brackets, seed players, score matches, and advance winners." },
   MANAGE_TEAMS: { label: "Manage teams", description: "Manage teams associated with this server when supported." },
@@ -82,11 +84,11 @@ export const PLATFORM_ROLE_DEFAULTS: Record<string, readonly PlatformPermission[
 export const WORKSPACE_ROLE_DEFAULTS: Record<string, readonly WorkspacePermission[]> = {
   OWNER: WORKSPACE_PERMISSIONS,
   ADMIN: [
-    "HOST_EVENTS", "MANAGE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS", "MANAGE_TEAMS",
+    "HOST_EVENTS", "MANAGE_EVENTS", "APPROVE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS", "MANAGE_TEAMS",
     "MANAGE_SERVER_PROFILE", "MANAGE_WEBHOOKS", "MANAGE_MEMBERS", "MANAGE_CODES",
     "VIEW_REPORTS", "VIEW_BASIC_AUDIT", "ASSIGN_LOW_ROLES",
   ],
-  STAFF: ["HOST_EVENTS", "MANAGE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS", "MANAGE_CODES", "VIEW_BASIC_AUDIT"],
+  STAFF: ["HOST_EVENTS", "MANAGE_EVENTS", "APPROVE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS", "MANAGE_CODES", "VIEW_BASIC_AUDIT"],
   HOST: ["HOST_EVENTS", "MANAGE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS"],
   REFEREE: ["MANAGE_PARTICIPANTS", "MANAGE_BRACKETS"],
   VIEWER: [],
