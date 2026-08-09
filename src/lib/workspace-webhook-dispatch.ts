@@ -19,6 +19,7 @@ export type WorkspaceWebhookNotification =
   | "EVENT_COMPLETED"
   | "EVENT_CANCELLED"
   | "BRACKET_PUBLISHED"
+  | "MATCH_UPDATE"
   | "SUGGESTION_UPDATE"
   | "COMMUNITY_ANNOUNCEMENT";
 
