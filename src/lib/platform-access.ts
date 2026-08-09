@@ -8,6 +8,7 @@ type PlatformRoleRow = RowDataPacket & {
   discord_id: string;
   role: PlatformRole | null;
   status: "ACTIVE" | "SUSPENDED" | "REMOVED" | null;
+  expires_at: Date | null;
 };
 
 const roleRank: Record<PlatformRole, number> = {
@@ -20,7 +21,7 @@ const roleRank: Record<PlatformRole, number> = {
 
 export async function getPlatformRole(userId: string): Promise<PlatformRole | null> {
   const rows = await query<PlatformRoleRow[]>(
-    `SELECT u.discord_id, psr.role, psr.status
+    `SELECT u.discord_id, psr.role, psr.status, psr.expires_at
      FROM users u
      LEFT JOIN platform_staff_roles psr ON psr.user_id = u.id
      WHERE u.id = ? LIMIT 1`,
@@ -29,7 +30,9 @@ export async function getPlatformRole(userId: string): Promise<PlatformRole | nu
   const row = rows[0];
   if (!row) return null;
   if (isPlatformOwner(row.discord_id)) return "OWNER";
-  return row.status === "ACTIVE" ? row.role : null;
+  if (row.status !== "ACTIVE" || !row.role) return null;
+  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
+  return row.role;
 }
 
 export async function hasPlatformRole(userId: string, minimum: PlatformRole): Promise<boolean> {
@@ -37,6 +40,8 @@ export async function hasPlatformRole(userId: string, minimum: PlatformRole): Pr
   return role ? roleRank[role] >= roleRank[minimum] : false;
 }
 
+// Legacy role helpers remain for older routes. New v0.3.8 access-sensitive routes
+// should prefer hasPlatformPermission from @/lib/permissions.
 export function canReviewProfiles(role: PlatformRole | null): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "REVIEWER";
 }

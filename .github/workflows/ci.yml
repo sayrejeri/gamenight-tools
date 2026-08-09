@@ -82,6 +82,7 @@ jobs:
           if (Test-Path $deploymentGuide) { Copy-Item $deploymentGuide $deploy }
           Copy-Item ".next" (Join-Path $deploy ".next") -Recurse -Force
           if (Test-Path "public") { Copy-Item "public" (Join-Path $deploy "public") -Recurse -Force }
+          if (Test-Path "database") { Copy-Item "database" (Join-Path $deploy "database") -Recurse -Force }
 
           @(
             (Join-Path $deploy ".next\cache"),
@@ -119,6 +120,9 @@ jobs:
 
           foreach ($required in @(".next/BUILD_ID", "server.js", "package.json", "VERSION")) {
             if ($entries -notcontains $required) { throw "ZIP verification failed: missing $required" }
+          }
+          if ($version -eq "0.3.8" -and $entries -notcontains "database/004_access_control.sql") {
+            throw "ZIP verification failed: v0.3.8 migration is missing."
           }
           if (@($entries | Where-Object { $_ -match "\\" }).Count -gt 0) { throw "ZIP contains unsafe Windows backslash paths." }
 
