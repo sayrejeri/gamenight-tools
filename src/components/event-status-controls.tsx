@@ -40,14 +40,25 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
   }, [eventId, router]);
 
   async function run(action: Action) {
-    if (["CANCEL", "POSTPONE", "COMPLETE"].includes(action) && !window.confirm("Are you sure you want to continue?")) return;
+    let reason = "";
+    if (action === "CANCEL") {
+      const entered = window.prompt("Why is this event being cancelled? This reason will be shown to participants.", "");
+      if (entered === null) return;
+      reason = entered.trim();
+      if (reason.length < 2) {
+        setMessage("Enter a short cancellation reason so participants know what happened.");
+        return;
+      }
+      if (!window.confirm("Cancel this event and notify connected announcement webhooks?")) return;
+    } else if (["POSTPONE", "COMPLETE"].includes(action) && !window.confirm("Are you sure you want to continue?")) return;
+
     setBusy(action);
     setMessage("");
     try {
       const response = await fetch(`/api/events/${eventId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, reason: reason || undefined }),
       });
       const body = await response.json() as { error?: string; status?: string; bracketResult?: { generated?: boolean; participantCount?: number } };
       if (!response.ok) throw new Error(body.error ?? "Event status could not be changed.");
