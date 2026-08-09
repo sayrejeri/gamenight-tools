@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
-import { generateEventBracket } from "@/lib/bracket-generation";
+import { generateEventBracket, type DatabaseBracketFormat } from "@/lib/bracket-generation";
+import type { TieBreakMode } from "@/components/bracket/bracket-model";
 
 type EventRow = RowDataPacket & {
   id: string;
@@ -10,10 +11,14 @@ type EventRow = RowDataPacket & {
   status: string;
   signup_deadline: Date | null;
   bracket_enabled: number;
-  bracket_format: "SINGLE_ELIMINATION" | "THREE_PLAYER" | null;
+  bracket_format: DatabaseBracketFormat | null;
+  bracket_entry_mode: "PLAYER" | "TEAM";
   bracket_seeding_mode: "RANDOM" | "MANUAL" | null;
   bracket_auto_generate: number;
   bracket_require_check_in: number;
+  bracket_group_count: number;
+  bracket_advancers_per_group: number;
+  bracket_tiebreak_mode: TieBreakMode;
 };
 
 export async function POST(
@@ -25,7 +30,8 @@ export async function POST(
   const { eventId } = await context.params;
   const events = await query<EventRow[]>(
     `SELECT id, name, status, signup_deadline, bracket_enabled, bracket_format,
-            bracket_seeding_mode, bracket_auto_generate, bracket_require_check_in
+            bracket_entry_mode, bracket_seeding_mode, bracket_auto_generate, bracket_require_check_in,
+            bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode
      FROM events WHERE id = ? LIMIT 1`,
     [eventId],
   );
@@ -49,18 +55,17 @@ export async function POST(
       return { generated: false, participantCount: 0 };
     }
 
-    if (
-      event.bracket_enabled
-      && event.bracket_auto_generate
-      && event.bracket_format
-      && event.bracket_seeding_mode
-    ) {
+    if (event.bracket_enabled && event.bracket_auto_generate && event.bracket_format && event.bracket_seeding_mode) {
       return generateEventBracket(connection, {
         eventId,
         eventName: event.name,
         format: event.bracket_format,
         seedingMode: event.bracket_seeding_mode,
         requireCheckIn: Boolean(event.bracket_require_check_in),
+        entryMode: event.bracket_entry_mode,
+        groupCount: event.bracket_group_count,
+        advancersPerGroup: event.bracket_advancers_per_group,
+        tieBreakMode: event.bracket_tiebreak_mode,
       });
     }
 
