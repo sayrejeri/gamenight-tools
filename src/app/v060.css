@@ -8,6 +8,7 @@
 .match-settings-panel > summary { cursor:pointer; list-style:none; display:flex; justify-content:space-between; gap:1rem; align-items:center; }
 .match-settings-panel > summary::-webkit-details-marker { display:none; }
 .match-settings-body { margin-top:1rem; }
+.three-column { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
 .match-filter-row { display:flex; flex-wrap:wrap; gap:.55rem; }
 .filter-chip { border:1px solid var(--border); border-radius:999px; background:var(--surface); color:inherit; padding:.55rem .9rem; cursor:pointer; }
 .filter-chip.active { background:var(--text); color:var(--background); border-color:var(--text); }
@@ -36,6 +37,7 @@
 
 @media (max-width: 900px) {
   .tournament-stat-grid,.match-meta-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .three-column { grid-template-columns:1fr; }
 }
 @media (max-width: 620px) {
   .tournament-stat-grid,.match-meta-grid { grid-template-columns:1fr; }
