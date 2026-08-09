@@ -7,6 +7,7 @@ import { getPool, query, withTransaction } from "@/lib/db";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 import { generateEventBracket } from "@/lib/bracket-generation";
+import { bracketChampion, isDraft } from "@/components/bracket/bracket-model";
 import { dispatchWorkspaceWebhooks, type WorkspaceWebhookNotification } from "@/lib/workspace-webhook-dispatch";
 
 const actionSchema = z.object({
@@ -19,6 +20,11 @@ type EventRow = RowDataPacket & {
   starts_at: Date | null; timezone: string; status: string; primary_host_id: string; staff_approval_required: number;
   bracket_enabled: number; bracket_format: "SINGLE_ELIMINATION" | "THREE_PLAYER" | null;
   bracket_seeding_mode: "RANDOM" | "MANUAL" | null; bracket_auto_generate: number; bracket_require_check_in: number;
+};
+
+type CompletionBracketRow = RowDataPacket & {
+  id: string;
+  settings_json: string | null;
 };
 
 class TransitionConflict extends Error {}
@@ -81,6 +87,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
       if (action === "START" && event.bracket_enabled) {
         const [brackets] = await connection.query<(RowDataPacket & { settings_json: string | null })[]>(`SELECT settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`, [eventId]);
         if (!brackets[0]?.settings_json) throw new TransitionConflict(event.bracket_seeding_mode === "MANUAL" ? "Place the approved participants and save the bracket before starting the event." : "The bracket could not be generated. Check that enough eligible participants are approved and checked in.");
+      }
+      if (action === "COMPLETE" && event.bracket_enabled) {
+        const [brackets] = await connection.query<CompletionBracketRow[]>(
+          `SELECT id, settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`,
+          [eventId],
+        );
+        const bracket = brackets[0];
+        if (!bracket?.settings_json) throw new TransitionConflict("Finish and save the tournament bracket before completing this event.");
+        let bracketState: unknown = null;
+        try { bracketState = JSON.parse(bracket.settings_json); } catch { bracketState = null; }
+        if (!isDraft(bracketState) || !bracketChampion(bracketState)) {
+          throw new TransitionConflict("Finish every required bracket match before completing this event.");
+        }
       }
       await connection.execute(
         `UPDATE events SET status = ?, approved_by = IF(? = 'APPROVE', ?, approved_by),
