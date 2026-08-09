@@ -6,11 +6,13 @@ import { readSession } from "@/lib/auth";
 import { getPool, query } from "@/lib/db";
 import {
   canSendToChannel,
+  canViewChannel,
   communityScopePath,
   getActiveCommunityTimeout,
   getCommunityChannelContext,
   getCommunityScopeAccess,
 } from "@/lib/community-chat";
+import { dispatchWorkspaceWebhooks } from "@/lib/workspace-webhook-dispatch";
 
 const sendSchema = z.object({
   channelId: z.string().uuid(),
@@ -192,12 +194,15 @@ export async function POST(request: NextRequest) {
   const actionUrl = `${communityScopePath(context.channel.scope_type, context.channel.scope_id)}?channel=${encodeURIComponent(context.channel.id)}`;
   const notified = new Set<string>();
   if (replyAuthorUserId && replyAuthorUserId !== session.userId) {
-    notified.add(replyAuthorUserId);
-    await getPool().execute(
-      `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
-       VALUES (?, ?, 'CHAT_REPLY', 'CHAT', 'New reply', ?, ?)`,
-      [randomUUID(), replyAuthorUserId, `${session.globalName ?? session.username} replied to you in ${context.access.name} #${context.channel.name}.`, actionUrl],
-    );
+    const replyAccess = await getCommunityScopeAccess(replyAuthorUserId, context.channel.scope_type, context.channel.scope_id);
+    if (replyAccess && canViewChannel(replyAccess, context.channel.channel_type)) {
+      notified.add(replyAuthorUserId);
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
+         VALUES (?, ?, 'CHAT_REPLY', 'CHAT', 'New reply', ?, ?)`,
+        [randomUUID(), replyAuthorUserId, `${session.globalName ?? session.username} replied to you in ${context.access.name} #${context.channel.name}.`, actionUrl],
+      );
+    }
   }
 
   const mentionNames = Array.from(parsed.data.body.matchAll(/@([A-Za-z0-9_.-]{2,40})/g))
@@ -215,7 +220,7 @@ export async function POST(request: NextRequest) {
     for (const mentioned of mentionRows) {
       if (mentioned.id === session.userId || notified.has(mentioned.id)) continue;
       const mentionedAccess = await getCommunityScopeAccess(mentioned.id, context.channel.scope_type, context.channel.scope_id);
-      if (!mentionedAccess?.canRead) continue;
+      if (!mentionedAccess || !canViewChannel(mentionedAccess, context.channel.channel_type)) continue;
       notified.add(mentioned.id);
       await getPool().execute(
         `INSERT INTO notifications (id, user_id, notification_type, category, title, message, action_url)
@@ -223,6 +228,22 @@ export async function POST(request: NextRequest) {
         [randomUUID(), mentioned.id, `${session.globalName ?? session.username} mentioned you in ${context.access.name} #${context.channel.name}.`, actionUrl],
       );
     }
+  }
+
+  if (context.channel.scope_type === "WORKSPACE" && context.channel.channel_type === "ANNOUNCEMENT") {
+    const appUrl = process.env.APP_URL;
+    const absoluteUrl = appUrl ? new URL(actionUrl, appUrl.endsWith("/") ? appUrl : `${appUrl}/`).toString() : null;
+    await dispatchWorkspaceWebhooks({
+      workspaceId: context.channel.scope_id,
+      notificationType: "COMMUNITY_ANNOUNCEMENT",
+      title: `${context.access.name} announcement`,
+      description: parsed.data.body,
+      url: absoluteUrl,
+      fields: [
+        { name: "Channel", value: `#${context.channel.name}`, inline: true },
+        { name: "Posted by", value: session.globalName ?? session.username, inline: true },
+      ],
+    });
   }
 
   return NextResponse.json({ success: true, id: messageId }, { status: 201 });
