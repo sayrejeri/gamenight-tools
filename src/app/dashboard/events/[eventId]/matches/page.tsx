@@ -126,29 +126,35 @@ export default async function EventMatchesPage({ params }: { params: Promise<{ e
   ]);
 
   const settings = settingsRows[0] ?? { default_best_of: 1, no_show_minutes: 15, confirmation_minutes: 30, paused_at: null, pause_reason: null };
-  const matches: MatchCenterMatch[] = matchRows.map((match) => ({
-    id: match.id,
-    roundNumber: match.round_number,
-    matchNumber: match.match_number,
-    status: match.status,
-    scheduledAt: iso(match.scheduled_at),
-    noShowDeadlineAt: iso(match.no_show_deadline_at),
-    bestOf: match.best_of,
-    readyAAt: iso(match.ready_a_at),
-    readyBAt: iso(match.ready_b_at),
-    a: { entryId: match.a_entry_id, userId: match.a_user_id, name: match.a_name },
-    b: { entryId: match.b_entry_id, userId: match.b_user_id, name: match.b_name },
-    winnerEntryId: match.winner_entry_id,
-    report: match.report_id && match.report_winner_entry_id && match.report_status && match.report_submitted_by && match.report_submitted_at ? {
-      id: match.report_id, winnerEntryId: match.report_winner_entry_id, scoreA: match.score_a, scoreB: match.score_b,
-      proofUrl: match.proof_url, notes: match.report_notes, status: match.report_status,
-      submittedBy: match.report_submitted_by, submittedAt: new Date(match.report_submitted_at).toISOString(),
-    } : null,
-    dispute: match.dispute_id && match.dispute_reason && match.dispute_opened_by && match.dispute_created_at ? {
-      id: match.dispute_id, reason: match.dispute_reason, proofUrl: match.dispute_proof_url,
-      openedBy: match.dispute_opened_by, createdAt: new Date(match.dispute_created_at).toISOString(),
-    } : null,
-  }));
+  const matches: MatchCenterMatch[] = matchRows.map((match) => {
+    const canSeeEvidence = tournamentAccess.manager || match.a_user_id === session.userId || match.b_user_id === session.userId;
+    return {
+      id: match.id,
+      roundNumber: match.round_number,
+      matchNumber: match.match_number,
+      status: match.status,
+      scheduledAt: iso(match.scheduled_at),
+      noShowDeadlineAt: iso(match.no_show_deadline_at),
+      bestOf: match.best_of,
+      readyAAt: iso(match.ready_a_at),
+      readyBAt: iso(match.ready_b_at),
+      a: { entryId: match.a_entry_id, userId: match.a_user_id, name: match.a_name },
+      b: { entryId: match.b_entry_id, userId: match.b_user_id, name: match.b_name },
+      winnerEntryId: match.winner_entry_id,
+      report: match.report_id && match.report_winner_entry_id && match.report_status && match.report_submitted_by && match.report_submitted_at ? {
+        id: match.report_id, winnerEntryId: match.report_winner_entry_id, scoreA: match.score_a, scoreB: match.score_b,
+        proofUrl: canSeeEvidence ? match.proof_url : null, notes: canSeeEvidence ? match.report_notes : null, status: match.report_status,
+        submittedBy: match.report_submitted_by, submittedAt: new Date(match.report_submitted_at).toISOString(),
+      } : null,
+      dispute: match.dispute_id && match.dispute_reason && match.dispute_opened_by && match.dispute_created_at ? {
+        id: match.dispute_id,
+        reason: canSeeEvidence ? match.dispute_reason : "A result dispute is under tournament staff review.",
+        proofUrl: canSeeEvidence ? match.dispute_proof_url : null,
+        openedBy: match.dispute_opened_by,
+        createdAt: new Date(match.dispute_created_at).toISOString(),
+      } : null,
+    };
+  });
 
   const wins = careerRows.filter((row) => row.winner_user_id === session.userId).length;
   const losses = careerRows.length - wins;
