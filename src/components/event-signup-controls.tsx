@@ -11,7 +11,7 @@ export function EventSignupControls({
   eventId,
   eventStatus,
   participantStatus,
-  participantHasIdentity,
+  participantSignupCompleted,
   checkedIn,
   joinCodeRequired,
   signupMode,
@@ -21,7 +21,7 @@ export function EventSignupControls({
   eventId: string;
   eventStatus: string;
   participantStatus: string | null;
-  participantHasIdentity: boolean;
+  participantSignupCompleted: boolean;
   checkedIn: boolean;
   joinCodeRequired: boolean;
   signupMode: "AUTO" | "APPROVAL";
@@ -82,8 +82,8 @@ export function EventSignupControls({
     }
   }
 
-  const pendingCompletion = participantStatus === "PENDING" && !participantHasIdentity;
-  const pendingApproval = participantStatus === "PENDING" && participantHasIdentity && signupMode === "APPROVAL";
+  const pendingCompletion = participantStatus === "PENDING" && !participantSignupCompleted;
+  const pendingApproval = participantStatus === "PENDING" && participantSignupCompleted && signupMode === "APPROVAL";
   const withdrawableParticipant = Boolean(participantStatus && !["WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus));
   const canStartSignup = eventStatus === "SIGNUPS_OPEN" && (!withdrawableParticipant || pendingCompletion);
   const missingRequiredIdentity = Boolean(requiredConnectionType && !matchingConnections.length);
@@ -111,7 +111,7 @@ export function EventSignupControls({
       ) : null}
 
       {pendingCompletion ? <p className="muted">Your join code was accepted. Select the account you will use and complete your signup.</p> : null}
-      {pendingApproval ? <div className="event-pending-approval"><span className="badge">Awaiting host approval</span><p className="muted">Your game identity is saved. A host will approve, waitlist, or decline your signup.</p></div> : null}
+      {pendingApproval ? <div className="event-pending-approval"><span className="badge">Awaiting host approval</span><p className="muted">Your signup is complete. A host will approve, waitlist, or decline it.</p></div> : null}
       {canStartSignup ? (
         <button className="button" type="button" disabled={busy || missingRequiredIdentity} onClick={() => run("SIGN_UP")}>
           {busy ? "Updating…" : pendingCompletion ? "Complete signup" : joinCodeRequired ? "Complete signup after redeeming code" : signupMode === "APPROVAL" ? "Submit signup for approval" : "Sign up for event"}
