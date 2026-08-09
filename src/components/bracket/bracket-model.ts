@@ -25,6 +25,18 @@ export type DerivedMatch = {
   winner: Participant | null;
 };
 
+export type ThreePlayerResolution = {
+  playerA: Participant | null;
+  playerB: Participant | null;
+  playerC: Participant | null;
+  m1Winner: Participant | null;
+  m1Loser: Participant | null;
+  m2Winner: Participant | null;
+  m3Winner: Participant | null;
+  champion: Participant | null;
+  reason: string;
+};
+
 export function makeParticipant(index: number, name = ""): Participant {
   return { id: crypto.randomUUID(), name: name || `Player ${index + 1}` };
 }
@@ -120,8 +132,45 @@ export function deriveSingleElimination(firstRound: Pair[], selectedWinners: Win
   return rounds;
 }
 
+export function resolveThreePlayerAdvancement(participants: Participant[], winners: ThreeWinnerMap): ThreePlayerResolution {
+  const [playerA = null, playerB = null, playerC = null] = participants.slice(0, 3);
+  const m1Winner = [playerA, playerB].find((player) => player?.id === winners.m1) ?? null;
+  const m1Loser = m1Winner ? (m1Winner.id === playerA?.id ? playerB : playerA) : null;
+  const m2Winner = [playerC, m1Loser].find((player) => player?.id === winners.m2) ?? null;
+  const m3Winner = [playerC, m1Winner].find((player) => player?.id === winners.m3) ?? null;
+  let champion: Participant | null = null;
+  let reason = "Complete all three matches to calculate who advances.";
+
+  if (m1Winner && m1Loser && m2Winner && m3Winner && playerC) {
+    if (m2Winner.id === playerC.id) {
+      champion = m3Winner;
+      reason = `${m1Loser.name} lost both opening matches. The winner of ${m1Winner.name} vs ${playerC.name} advances.`;
+    } else if (m3Winner.id === playerC.id) {
+      champion = playerC;
+      reason = `${playerC.name} defeated the first-match winner, so ${playerC.name} advances under the three-player rule.`;
+    } else {
+      champion = m1Loser;
+      reason = `${m1Winner.name} won the final listed match, so ${m1Loser.name} advances because they defeated ${playerC.name} and no rematch is played.`;
+    }
+  }
+
+  return { playerA, playerB, playerC, m1Winner, m1Loser, m2Winner, m3Winner, champion, reason };
+}
+
+export function bracketChampion(draft: BracketDraft): Participant | null {
+  if (draft.format === "three") return resolveThreePlayerAdvancement(draft.participants, draft.threeWinners).champion;
+  const rounds = deriveSingleElimination(draft.firstRound, draft.winners);
+  return rounds.at(-1)?.[0]?.winner ?? null;
+}
+
 export function isDraft(value: unknown): value is BracketDraft {
   if (!value || typeof value !== "object") return false;
   const draft = value as Partial<BracketDraft>;
-  return draft.version === 1 && Array.isArray(draft.participants) && Array.isArray(draft.firstRound);
+  return draft.version === 1
+    && (draft.format === "single" || draft.format === "three")
+    && (draft.seedingMode === "manual" || draft.seedingMode === "random")
+    && Array.isArray(draft.participants)
+    && Array.isArray(draft.firstRound)
+    && Boolean(draft.winners && typeof draft.winners === "object")
+    && Boolean(draft.threeWinners && typeof draft.threeWinners === "object");
 }
