@@ -8,6 +8,7 @@ import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
 const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
+const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "GROUPS_PLAYOFFS"]);
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(160), description: z.string().trim().max(5000).nullable().optional(),
   platformName: z.string().trim().max(80).nullable().optional(), subgameName: z.string().trim().max(191).nullable().optional(),
@@ -17,11 +18,25 @@ const updateSchema = z.object({
   checkInOpensAt: z.string().datetime().nullable().optional(), checkInDeadline: z.string().datetime().nullable().optional(),
   maxParticipants: z.number().int().min(0).max(10000).nullable().optional(), timezone: z.string().trim().min(2).max(100),
   visibility: z.enum(["SERVER", "CODE_ONLY", "UNLISTED", "PUBLIC", "STAFF_ONLY"]), joinCodeRequired: z.boolean(),
-  bracketEnabled: z.boolean(), bracketFormat: z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER"]).nullable().optional(),
+  bracketEnabled: z.boolean(), bracketFormat: bracketFormatSchema.nullable().optional(),
+  bracketEntryMode: z.enum(["PLAYER", "TEAM"]).default("PLAYER"),
   bracketSeedingMode: z.enum(["RANDOM", "MANUAL"]).nullable().optional(), bracketAutoGenerate: z.boolean(), bracketRequireCheckIn: z.boolean(),
+  bracketGroupCount: z.number().int().min(2).max(16).default(2), bracketAdvancersPerGroup: z.number().int().min(1).max(8).default(1),
+  bracketTiebreakMode: z.enum(["HEAD_TO_HEAD_THEN_SEED", "SEED"]).default("HEAD_TO_HEAD_THEN_SEED"),
 });
 
-type EventAccessRow = RowDataPacket & { workspace_id: string; primary_host_id: string; status: string };
+type EventAccessRow = RowDataPacket & {
+  workspace_id: string;
+  primary_host_id: string;
+  status: string;
+  bracket_enabled: number;
+  bracket_format: string | null;
+  bracket_entry_mode: string;
+  bracket_seeding_mode: string | null;
+  bracket_group_count: number;
+  bracket_advancers_per_group: number;
+  bracket_tiebreak_mode: string;
+};
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ eventId: string }> }) {
   const session = await readSession();
@@ -30,7 +45,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const parsed = updateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid event information.", details: parsed.error.flatten() }, { status: 400 });
 
-  const rows = await query<EventAccessRow[]>(`SELECT workspace_id, primary_host_id, status FROM events WHERE id = ? LIMIT 1`, [eventId]);
+  const rows = await query<EventAccessRow[]>(
+    `SELECT workspace_id, primary_host_id, status, bracket_enabled, bracket_format, bracket_entry_mode,
+            bracket_seeding_mode, bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode
+     FROM events WHERE id = ? LIMIT 1`,
+    [eventId],
+  );
   const event = rows[0];
   if (!event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
   const cohost = await query<(RowDataPacket & { permission_level: string })[]>(
@@ -46,31 +66,64 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const bracketFormat = parsed.data.bracketEnabled ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION" : null;
   const seedingMode = parsed.data.bracketEnabled ? parsed.data.bracketSeedingMode ?? "RANDOM" : null;
   const gameName = parsed.data.subgameName || parsed.data.platformName || null;
+  const requireCheckIn = parsed.data.bracketEntryMode === "PLAYER" && parsed.data.bracketRequireCheckIn;
+  const competitionChanged = Boolean(parsed.data.bracketEnabled) !== Boolean(event.bracket_enabled)
+    || bracketFormat !== event.bracket_format
+    || parsed.data.bracketEntryMode !== event.bracket_entry_mode
+    || seedingMode !== event.bracket_seeding_mode
+    || parsed.data.bracketGroupCount !== event.bracket_group_count
+    || parsed.data.bracketAdvancersPerGroup !== event.bracket_advancers_per_group
+    || parsed.data.bracketTiebreakMode !== event.bracket_tiebreak_mode;
 
   await withTransaction(async (connection) => {
     await connection.execute(
       `UPDATE events SET name = ?, description = ?, game_name = ?, platform_name = ?, subgame_name = ?,
          game_url = ?, game_external_id = ?, game_universe_id = ?, game_thumbnail_url = ?, required_connection_type = ?,
          starts_at = ?, signup_deadline = ?, check_in_opens_at = ?, check_in_deadline = ?, max_participants = ?, timezone = ?,
-         visibility = ?, join_code_required = ?, bracket_enabled = ?, bracket_format = ?, bracket_seeding_mode = ?,
-         bracket_auto_generate = ?, bracket_require_check_in = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
-      [parsed.data.name, parsed.data.description ?? null, gameName, parsed.data.platformName ?? null, parsed.data.subgameName ?? null,
-       parsed.data.gameUrl || null, parsed.data.gameExternalId ?? null, parsed.data.gameUniverseId ?? null, parsed.data.gameThumbnailUrl || null,
-       parsed.data.requiredConnectionType ?? null, parsed.data.startsAt ? new Date(parsed.data.startsAt) : null,
-       parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null, parsed.data.checkInOpensAt ? new Date(parsed.data.checkInOpensAt) : null,
-       parsed.data.checkInDeadline ? new Date(parsed.data.checkInDeadline) : null, maximum, parsed.data.timezone, parsed.data.visibility,
-       parsed.data.joinCodeRequired ? 1 : 0, parsed.data.bracketEnabled ? 1 : 0, bracketFormat, seedingMode,
-       parsed.data.bracketAutoGenerate ? 1 : 0, parsed.data.bracketRequireCheckIn ? 1 : 0, eventId],
+         visibility = ?, join_code_required = ?, bracket_enabled = ?, bracket_format = ?, bracket_entry_mode = ?, bracket_seeding_mode = ?,
+         bracket_auto_generate = ?, bracket_require_check_in = ?, bracket_group_count = ?, bracket_advancers_per_group = ?, bracket_tiebreak_mode = ?,
+         updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
+      [
+        parsed.data.name, parsed.data.description ?? null, gameName, parsed.data.platformName ?? null, parsed.data.subgameName ?? null,
+        parsed.data.gameUrl || null, parsed.data.gameExternalId ?? null, parsed.data.gameUniverseId ?? null, parsed.data.gameThumbnailUrl || null,
+        parsed.data.requiredConnectionType ?? null, parsed.data.startsAt ? new Date(parsed.data.startsAt) : null,
+        parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null, parsed.data.checkInOpensAt ? new Date(parsed.data.checkInOpensAt) : null,
+        parsed.data.checkInDeadline ? new Date(parsed.data.checkInDeadline) : null, maximum, parsed.data.timezone, parsed.data.visibility,
+        parsed.data.joinCodeRequired ? 1 : 0, parsed.data.bracketEnabled ? 1 : 0, bracketFormat, parsed.data.bracketEntryMode, seedingMode,
+        parsed.data.bracketAutoGenerate ? 1 : 0, requireCheckIn ? 1 : 0, parsed.data.bracketGroupCount,
+        parsed.data.bracketAdvancersPerGroup, parsed.data.bracketTiebreakMode, eventId,
+      ],
     );
     if (parsed.data.bracketEnabled && bracketFormat && seedingMode) {
       await connection.execute(
         `INSERT INTO brackets (id, event_id, format, status, seeding_mode) VALUES (?, ?, ?, 'DRAFT', ?)
-         ON DUPLICATE KEY UPDATE format = VALUES(format), seeding_mode = VALUES(seeding_mode), updated_at = CURRENT_TIMESTAMP(3)`,
-        [randomUUID(), eventId, bracketFormat, seedingMode],
+         ON DUPLICATE KEY UPDATE
+           format = VALUES(format), seeding_mode = VALUES(seeding_mode),
+           status = IF(? = 1, 'DRAFT', status),
+           settings_json = IF(? = 1, NULL, settings_json),
+           generated_at = IF(? = 1, NULL, generated_at),
+           completed_at = IF(? = 1, NULL, completed_at),
+           updated_at = CURRENT_TIMESTAMP(3)`,
+        [randomUUID(), eventId, bracketFormat, seedingMode, competitionChanged ? 1 : 0, competitionChanged ? 1 : 0, competitionChanged ? 1 : 0, competitionChanged ? 1 : 0],
       );
+      if (competitionChanged) {
+        const [bracketRows] = await connection.query<(RowDataPacket & { id: string })[]>(`SELECT id FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]);
+        if (bracketRows[0]) {
+          await connection.execute(`DELETE FROM bracket_matches WHERE bracket_id = ?`, [bracketRows[0].id]);
+          await connection.execute(`DELETE FROM bracket_entries WHERE bracket_id = ?`, [bracketRows[0].id]);
+        }
+      }
     }
   });
 
-  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: "event.updated", targetType: "event", targetId: eventId, details: { platformName: parsed.data.platformName, bracketEnabled: parsed.data.bracketEnabled } });
-  return NextResponse.json({ success: true });
+  await writeAuditLog({
+    actorUserId: session.userId,
+    workspaceId: event.workspace_id,
+    eventId,
+    action: "event.updated",
+    targetType: "event",
+    targetId: eventId,
+    details: { platformName: parsed.data.platformName, bracketEnabled: parsed.data.bracketEnabled, bracketFormat, bracketEntryMode: parsed.data.bracketEntryMode, competitionChanged },
+  });
+  return NextResponse.json({ success: true, competitionReset: competitionChanged && parsed.data.bracketEnabled });
 }
