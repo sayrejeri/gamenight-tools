@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-const statuses = ["PENDING", "APPROVED", "WAITLISTED", "REJECTED", "NO_SHOW", "DISQUALIFIED"] as const;
+const statuses = ["PENDING", "APPROVED", "WAITLISTED", "REJECTED", "WITHDRAWN", "NO_SHOW", "DISQUALIFIED"] as const;
 
 export function ParticipantStatusControl({
   eventId,
