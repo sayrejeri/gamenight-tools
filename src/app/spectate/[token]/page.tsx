@@ -31,7 +31,7 @@ async function loadSpectatorLink(token: string): Promise<PublicEventRow | null> 
      FROM event_public_share_links s
      INNER JOIN events e ON e.id = s.event_id
      INNER JOIN workspaces w ON w.id = e.workspace_id
-     INNER JOIN brackets b ON b.event_id = e.id
+     LEFT JOIN brackets b ON b.event_id = e.id
      WHERE s.token = ? AND s.is_enabled = 1
        AND (s.expires_at IS NULL OR s.expires_at > CURRENT_TIMESTAMP(3))
      LIMIT 1`,
