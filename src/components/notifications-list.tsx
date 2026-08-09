@@ -45,7 +45,7 @@ export function NotificationsList({ notifications }: { notifications: Notificati
       {visible.length ? <div className="notification-list">{visible.map((item) => (
         <article className={`notification-card${item.is_read ? "" : " unread"}`} key={item.id}>
           {item.action_url ? <Link className="notification-card-main" href={item.action_url}><span className="card-kicker">{item.category ?? "UPDATE"}</span><h3>{item.title}</h3><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString()}</small></Link> : <div className="notification-card-main"><span className="card-kicker">{item.category ?? "UPDATE"}</span><h3>{item.title}</h3><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString()}</small></div>}
-          <div className="notification-actions">{!item.is_read ? <button className="button button-secondary" type="button" onClick={() => mark(item.id)} disabled={busy === item.id}>Mark read</button> : <button className="notification-trash" type="button" title="Delete notification" aria-label={`Delete ${item.title}`} onClick={() => remove(item.id)} disabled={busy === `delete-${item.id}`}>🗑</button>}</div>
+          <div className="notification-actions">{!item.is_read ? <button className="button button-secondary" type="button" onClick={() => mark(item.id)} disabled={busy === item.id}>Mark read</button> : <button className="notification-trash" type="button" title="Delete notification" aria-label={`Delete ${item.title}`} onClick={() => remove(item.id)} disabled={busy === `delete-${item.id}`}>🗑️</button>}</div>
         </article>
       ))}</div> : <div className="empty-state">{notifications.length ? "No notifications match this filter." : "You do not have any notifications yet."}</div>}
     </div>
