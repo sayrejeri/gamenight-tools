@@ -6,17 +6,19 @@ import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
-import { bracketChampion, isDraft } from "@/components/bracket/bracket-model";
+import { bracketChampion, isDraft, type BracketFormat } from "@/components/bracket/bracket-model";
 import { syncBracketRecords } from "@/lib/bracket-normalization";
 
+const databaseFormats = ["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "GROUPS_PLAYOFFS"] as const;
 const saveSchema = z.object({
-  format: z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER"]),
+  format: z.enum(databaseFormats),
   seedingMode: z.enum(["RANDOM", "MANUAL"]),
   state: z.unknown(),
   expectedUpdatedAt: z.string().datetime().nullable().optional(),
 });
 const statusSchema = z.object({ status: z.enum(["GENERATED", "LIVE", "COMPLETED"]) });
 
+type DatabaseFormat = typeof databaseFormats[number];
 type EventRow = RowDataPacket & { workspace_id: string; primary_host_id: string };
 type BracketRow = RowDataPacket & {
   id: string;
@@ -26,6 +28,14 @@ type BracketRow = RowDataPacket & {
   status: "DRAFT" | "GENERATED" | "LIVE" | "COMPLETED";
   updated_at: Date;
 };
+
+function draftFormatForDatabase(format: DatabaseFormat): BracketFormat {
+  if (format === "THREE_PLAYER") return "three";
+  if (format === "DOUBLE_ELIMINATION") return "double";
+  if (format === "ROUND_ROBIN") return "round_robin";
+  if (format === "GROUPS_PLAYOFFS") return "groups";
+  return "single";
+}
 
 async function canEditBracket(userId: string, eventId: string) {
   const events = await query<EventRow[]>(`SELECT workspace_id, primary_host_id FROM events WHERE id = ? LIMIT 1`, [eventId]);
@@ -74,16 +84,19 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ eve
   const access = await canEditBracket(session.userId, eventId);
   if (!access.allowed || !access.event) return NextResponse.json({ error: "Bracket manager permission is required." }, { status: 403 });
   const parsed = saveSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success || !isDraft(parsed.data?.state)) return NextResponse.json({ error: "Invalid bracket draft." }, { status: 400 });
+  if (!parsed.success || !isDraft(parsed.data?.state)) return NextResponse.json({ error: "Invalid competition draft." }, { status: 400 });
   const draft = parsed.data.state;
-  if ((parsed.data.format === "SINGLE_ELIMINATION") !== (draft.format === "single")) {
-    return NextResponse.json({ error: "Bracket format does not match the saved state." }, { status: 400 });
+  if (draftFormatForDatabase(parsed.data.format) !== draft.format) {
+    return NextResponse.json({ error: "Competition format does not match the saved state." }, { status: 400 });
   }
   if (parsed.data.seedingMode.toLowerCase() !== draft.seedingMode) {
-    return NextResponse.json({ error: "Bracket placement mode does not match the saved state." }, { status: 400 });
+    return NextResponse.json({ error: "Competition placement mode does not match the saved state." }, { status: 400 });
+  }
+  if (["double", "round_robin", "groups"].includes(draft.format) && !(draft.competitionMatches?.length)) {
+    return NextResponse.json({ error: "Generate the competition schedule before saving it." }, { status: 400 });
   }
   const serialized = JSON.stringify(draft);
-  if (serialized.length > 1_000_000) return NextResponse.json({ error: "The bracket draft is too large to save." }, { status: 413 });
+  if (serialized.length > 2_000_000) return NextResponse.json({ error: "The competition draft is too large to save." }, { status: 413 });
 
   const result = await withTransaction(async (connection) => {
     const [existingRows] = await connection.query<BracketRow[]>(
@@ -91,14 +104,10 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ eve
       [eventId],
     );
     const existing = existingRows[0];
-    if (existing?.status === "COMPLETED") {
-      return { ok: false as const, statusCode: 409, error: "This bracket is completed. Reopen it before editing placement." };
-    }
-    if (existing?.status === "LIVE") {
-      return { ok: false as const, statusCode: 409, error: "This bracket is live. Use Match Center for results, forfeits, disputes, or corrections." };
-    }
+    if (existing?.status === "COMPLETED") return { ok: false as const, statusCode: 409, error: "This competition is completed. Reopen it before editing placement." };
+    if (existing?.status === "LIVE") return { ok: false as const, statusCode: 409, error: "This competition is live. Use Match Center for results, forfeits, disputes, or corrections." };
     if (existing && !sameRevision(new Date(existing.updated_at), parsed.data.expectedUpdatedAt)) {
-      return { ok: false as const, statusCode: 409, error: "This bracket changed after you opened the editor. Reload the bracket before saving so newer tournament changes are not overwritten." };
+      return { ok: false as const, statusCode: 409, error: "This competition changed after you opened the editor. Reload before saving so newer tournament changes are not overwritten." };
     }
 
     const bracketId = existing?.id ?? randomUUID();
@@ -123,7 +132,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ eve
     action: "bracket.saved",
     targetType: "bracket",
     targetId: result.bracketId,
-    details: { format: parsed.data.format, seedingMode: parsed.data.seedingMode, status: result.status },
+    details: { format: parsed.data.format, seedingMode: parsed.data.seedingMode, status: result.status, entrantMode: draft.entrantMode ?? "player" },
   });
   return NextResponse.json({ success: true, status: result.status, updatedAt: result.updatedAt });
 }
@@ -135,7 +144,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const access = await canEditBracket(session.userId, eventId);
   if (!access.allowed || !access.event) return NextResponse.json({ error: "Bracket manager permission is required." }, { status: 403 });
   const parsed = statusSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Choose a valid bracket status." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Choose a valid competition status." }, { status: 400 });
 
   const result = await withTransaction(async (connection) => {
     const [rows] = await connection.query<BracketRow[]>(
@@ -143,24 +152,18 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
       [eventId],
     );
     const bracket = rows[0];
-    if (!bracket || !bracket.settings_json) {
-      return { ok: false as const, statusCode: 400, error: "Save the bracket before changing its status." };
-    }
+    if (!bracket || !bracket.settings_json) return { ok: false as const, statusCode: 400, error: "Save the competition before changing its status." };
 
     let state: unknown = null;
     try { state = JSON.parse(bracket.settings_json); } catch { state = null; }
-    if (!isDraft(state)) {
-      return { ok: false as const, statusCode: 409, error: "The saved bracket state is invalid." };
-    }
+    if (!isDraft(state)) return { ok: false as const, statusCode: 409, error: "The saved competition state is invalid." };
     if (parsed.data.status === "COMPLETED" && !bracketChampion(state)) {
-      return { ok: false as const, statusCode: 400, error: "Finish every required match in Match Center before marking the bracket completed." };
+      return { ok: false as const, statusCode: 400, error: "Finish every required match in Match Center before marking the competition completed." };
     }
 
     await connection.execute(
-      `UPDATE brackets
-       SET status = ?, completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP(3) ELSE NULL END,
-           updated_at = CURRENT_TIMESTAMP(3)
-       WHERE id = ?`,
+      `UPDATE brackets SET status = ?, completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP(3) ELSE NULL END,
+           updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
       [parsed.data.status, parsed.data.status, bracket.id],
     );
     await syncBracketRecords(connection, bracket.id, state);
@@ -169,7 +172,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   });
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.statusCode });
-
   await writeAuditLog({
     actorUserId: session.userId,
     workspaceId: access.event.workspace_id,
