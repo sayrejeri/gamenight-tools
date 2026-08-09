@@ -16,6 +16,7 @@ type EventRow = RowDataPacket & {
   bracket_enabled: number;
   user_in_guild: number;
 };
+type CohostRow = RowDataPacket & { permission_level: string };
 type BracketRow = RowDataPacket & { settings_json: string | null; status: string };
 
 export default async function EventBracketPage({ params }: { params: Promise<{ eventId: string }> }) {
@@ -32,22 +33,27 @@ export default async function EventBracketPage({ params }: { params: Promise<{ e
 
   const [workspaceAccess, cohostRows, participantRows, bracketRows] = await Promise.all([
     getWorkspacePermissionSnapshot(session.userId, event.workspace_id),
-    query<(RowDataPacket & { id: string })[]>(`SELECT id FROM event_cohosts WHERE event_id = ? AND invited_user_id = ? AND status = 'ACCEPTED' LIMIT 1`, [eventId, session.userId]),
+    query<CohostRow[]>(`SELECT permission_level FROM event_cohosts WHERE event_id = ? AND invited_user_id = ? AND status = 'ACCEPTED' LIMIT 1`, [eventId, session.userId]),
     query<(RowDataPacket & { status: string })[]>(`SELECT status FROM event_participants WHERE event_id = ? AND user_id = ? LIMIT 1`, [eventId, session.userId]),
     query<BracketRow[]>(`SELECT settings_json, status FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]),
   ]);
 
   const eventPermissions = workspaceAccess.permissions;
-  const isManager = event.primary_host_id === session.userId
+  const cohostLevel = cohostRows[0]?.permission_level ?? "";
+  const isEventManager = event.primary_host_id === session.userId
     || ["HOST_EVENTS", "MANAGE_EVENTS", "APPROVE_EVENTS", "MANAGE_PARTICIPANTS", "MANAGE_BRACKETS"].some((permission) => eventPermissions.includes(permission as typeof eventPermissions[number]))
     || Boolean(cohostRows[0]);
+  const canManageBracket = event.primary_host_id === session.userId
+    || eventPermissions.includes("MANAGE_BRACKETS")
+    || ["FULL", "BRACKET"].includes(cohostLevel);
+
   const restrictedStatus = event.status === "DRAFT" || event.status === "AWAITING_APPROVAL";
   const canViewEvent = restrictedStatus
-    ? isManager
+    ? isEventManager
     : event.visibility === "PUBLIC"
       || event.visibility === "UNLISTED"
       || (event.visibility === "SERVER" && Boolean(event.user_in_guild))
-      || isManager
+      || isEventManager
       || Boolean(participantRows[0]);
   if (!canViewEvent) notFound();
 
@@ -55,7 +61,7 @@ export default async function EventBracketPage({ params }: { params: Promise<{ e
   if (!bracket?.settings_json) {
     return <section className="panel section-stack"><h1>Bracket unavailable</h1><p className="muted">The host has not saved a bracket for this event yet.</p><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link></section>;
   }
-  if (!isManager && !["LIVE", "COMPLETED"].includes(bracket.status)) {
+  if (!canManageBracket && !["LIVE", "COMPLETED"].includes(bracket.status)) {
     return <section className="panel section-stack"><h1>Bracket not live yet</h1><p className="muted">The host is still preparing the bracket. Check back once it has been published.</p><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link></section>;
   }
 
@@ -66,7 +72,7 @@ export default async function EventBracketPage({ params }: { params: Promise<{ e
     <div className="section-stack competitive-view-page">
       <section className="page-heading">
         <div><span className="eyebrow">Competitive event</span><h1>{event.name} bracket</h1><p>Follow the saved tournament results as the event progresses.</p></div>
-        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link>{isManager ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage bracket</Link> : null}</div>
+        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link>{canManageBracket ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage bracket</Link> : null}</div>
       </section>
       <section className="panel section-stack"><BracketViewer state={state} status={bracket.status} /></section>
     </div>

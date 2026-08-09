@@ -122,20 +122,25 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const parsed = statusSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Choose a valid bracket status." }, { status: 400 });
 
-  const rows = await query<BracketRow[]>(
-    `SELECT id, format, seeding_mode, settings_json, status FROM brackets WHERE event_id = ? LIMIT 1`, [eventId],
-  );
-  const bracket = rows[0];
-  if (!bracket || !bracket.settings_json) return NextResponse.json({ error: "Save the bracket before changing its status." }, { status: 400 });
+  const result = await withTransaction(async (connection) => {
+    const [rows] = await connection.query<BracketRow[]>(
+      `SELECT id, format, seeding_mode, settings_json, status FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`,
+      [eventId],
+    );
+    const bracket = rows[0];
+    if (!bracket || !bracket.settings_json) {
+      return { ok: false as const, statusCode: 400, error: "Save the bracket before changing its status." };
+    }
 
-  let state: unknown = null;
-  try { state = JSON.parse(bracket.settings_json); } catch { state = null; }
-  if (!isDraft(state)) return NextResponse.json({ error: "The saved bracket state is invalid." }, { status: 409 });
-  if (parsed.data.status === "COMPLETED" && !bracketChampion(state)) {
-    return NextResponse.json({ error: "Finish every required match before marking the bracket completed." }, { status: 400 });
-  }
+    let state: unknown = null;
+    try { state = JSON.parse(bracket.settings_json); } catch { state = null; }
+    if (!isDraft(state)) {
+      return { ok: false as const, statusCode: 409, error: "The saved bracket state is invalid." };
+    }
+    if (parsed.data.status === "COMPLETED" && !bracketChampion(state)) {
+      return { ok: false as const, statusCode: 400, error: "Finish every required match before marking the bracket completed." };
+    }
 
-  await withTransaction(async (connection) => {
     await connection.execute(
       `UPDATE brackets
        SET status = ?, completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP(3) ELSE NULL END,
@@ -144,7 +149,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
       [parsed.data.status, parsed.data.status, bracket.id],
     );
     await syncBracketRecords(connection, bracket.id, state);
+    return { ok: true as const, bracketId: bracket.id, previousStatus: bracket.status };
   });
+
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.statusCode });
 
   await writeAuditLog({
     actorUserId: session.userId,
@@ -152,8 +160,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     eventId,
     action: "bracket.status_changed",
     targetType: "bracket",
-    targetId: bracket.id,
-    details: { from: bracket.status, to: parsed.data.status },
+    targetId: result.bracketId,
+    details: { from: result.previousStatus, to: parsed.data.status },
   });
   return NextResponse.json({ success: true, status: parsed.data.status });
 }
