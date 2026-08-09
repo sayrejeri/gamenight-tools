@@ -21,6 +21,12 @@ type RequestRow = RowDataPacket & {
   payload_json: string | null; status: string; timezone: string | null; guild_icon_hash: string | null;
 };
 
+type TeamPayload = {
+  teamTag?: string | null;
+  region?: string | null;
+  robloxGame?: { placeId?: string | null; universeId?: string | null; gameUrl?: string | null; thumbnailUrl?: string | null } | null;
+};
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ requestId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -45,15 +51,18 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
     if (parsed.data.decision === "APPROVED") {
       createdProfileId = randomUUID();
       if (profileRequest.request_type === "TEAM") {
-        const payload = profileRequest.payload_json ? JSON.parse(profileRequest.payload_json) as { teamTag?: string | null; region?: string | null } : {};
+        const payload = profileRequest.payload_json ? JSON.parse(profileRequest.payload_json) as TeamPayload : {};
+        const game = payload.robloxGame ?? null;
         await connection.execute(
           `INSERT INTO teams
-            (id, name, slug, tag, description, logo_url, banner_url, main_platform, main_game, region,
-             recruiting_status, profile_status, verification_level, home_workspace_id, owner_user_id, reviewed_by, reviewed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INVITE_ONLY', 'APPROVED', ?, ?, ?, ?, CURRENT_TIMESTAMP(3))`,
+            (id, name, slug, tag, description, logo_url, banner_url, main_platform, main_game,
+             main_game_external_id, main_game_universe_id, main_game_url, main_game_thumbnail_url,
+             region, recruiting_status, profile_status, verification_level, home_workspace_id, owner_user_id, reviewed_by, reviewed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INVITE_ONLY', 'APPROVED', ?, ?, ?, ?, CURRENT_TIMESTAMP(3))`,
           [createdProfileId, profileRequest.requested_name, profileRequest.requested_slug, payload.teamTag ?? null, profileRequest.description,
-           profileRequest.logo_url, profileRequest.banner_url, profileRequest.main_platform, profileRequest.main_game, payload.region ?? null,
-           parsed.data.verificationLevel, profileRequest.home_workspace_id, profileRequest.applicant_user_id, session.userId],
+           profileRequest.logo_url, profileRequest.banner_url, profileRequest.main_platform, profileRequest.main_game,
+           game?.placeId ?? null, game?.universeId ?? null, game?.gameUrl ?? null, game?.thumbnailUrl ?? null,
+           payload.region ?? null, parsed.data.verificationLevel, profileRequest.home_workspace_id, profileRequest.applicant_user_id, session.userId],
         );
         await connection.execute(
           `INSERT INTO team_members (team_id, user_id, role, status, invited_by, joined_at)
