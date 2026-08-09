@@ -32,14 +32,20 @@ export async function dispatchWorkspaceWebhooks(input: {
   url?: string | null;
   fields?: Array<{ name: string; value: string; inline?: boolean }>;
 }) {
+  const effectiveNotificationType: WorkspaceWebhookNotification = input.notificationType === "BRACKET_PUBLISHED" && input.url?.includes("/matches")
+    ? "MATCH_UPDATE"
+    : input.notificationType;
   const rows = await query<WebhookRow[]>(
     `SELECT id, encrypted_url, notification_types_json, username_override, avatar_url
      FROM workspace_webhooks WHERE workspace_id = ? AND is_active = 1`,
     [input.workspaceId],
   );
   const targets = rows.filter((row) => {
-    try { return (JSON.parse(row.notification_types_json ?? "[]") as string[]).includes(input.notificationType); }
-    catch { return false; }
+    try {
+      const configured = JSON.parse(row.notification_types_json ?? "[]") as string[];
+      return configured.includes(effectiveNotificationType)
+        || (effectiveNotificationType === "MATCH_UPDATE" && configured.includes("BRACKET_PUBLISHED"));
+    } catch { return false; }
   });
 
   await Promise.allSettled(targets.map(async (webhook) => {
@@ -56,7 +62,7 @@ export async function dispatchWorkspaceWebhooks(input: {
       await getPool().execute(
         `INSERT INTO webhook_delivery_logs (id, webhook_id, event_id, notification_type, status, response_status)
          VALUES (?, ?, ?, ?, 'SUCCESS', ?)`,
-        [randomUUID(), webhook.id, input.eventId ?? null, input.notificationType, status],
+        [randomUUID(), webhook.id, input.eventId ?? null, effectiveNotificationType, status],
       );
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : "Webhook delivery failed.";
@@ -68,7 +74,7 @@ export async function dispatchWorkspaceWebhooks(input: {
       await getPool().execute(
         `INSERT INTO webhook_delivery_logs (id, webhook_id, event_id, notification_type, status, error_message)
          VALUES (?, ?, ?, ?, 'FAILED', ?)`,
-        [randomUUID(), webhook.id, input.eventId ?? null, input.notificationType, message],
+        [randomUUID(), webhook.id, input.eventId ?? null, effectiveNotificationType, message],
       );
     }
   }));
