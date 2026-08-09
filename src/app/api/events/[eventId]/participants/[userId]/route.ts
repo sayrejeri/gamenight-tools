@@ -8,7 +8,7 @@ import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
 const bodySchema = z.object({
-  status: z.enum(["PENDING", "APPROVED", "WAITLISTED", "REJECTED", "NO_SHOW", "DISQUALIFIED"]).optional(),
+  status: z.enum(["PENDING", "APPROVED", "WAITLISTED", "REJECTED", "WITHDRAWN", "NO_SHOW", "DISQUALIFIED"]).optional(),
   staffNote: z.string().trim().max(1000).optional(),
 }).refine((value) => value.status !== undefined || value.staffNote !== undefined, { message: "No participant changes were provided." });
 
@@ -56,7 +56,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     await connection.execute(
       `UPDATE event_participants
        SET status = ?, staff_note = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP(3),
-           checked_in_at = IF(? IN ('REJECTED', 'NO_SHOW', 'DISQUALIFIED', 'WAITLISTED'), NULL, checked_in_at)
+           checked_in_at = IF(? IN ('REJECTED', 'WITHDRAWN', 'NO_SHOW', 'DISQUALIFIED', 'WAITLISTED'), NULL, checked_in_at)
        WHERE event_id = ? AND user_id = ?`,
       [nextStatus, nextNote, session.userId, nextStatus, eventId, userId],
     );
