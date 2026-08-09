@@ -9,6 +9,7 @@ import { query, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
 
 const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
+const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "GROUPS_PLAYOFFS"]);
 
 const createEventSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -30,10 +31,14 @@ const createEventSchema = z.object({
   joinCodeRequired: z.boolean().default(true),
   timezone: z.string().trim().min(2).max(100).default("America/Detroit"),
   bracketEnabled: z.boolean().default(false),
-  bracketFormat: z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER"]).nullable().optional(),
+  bracketFormat: bracketFormatSchema.nullable().optional(),
+  bracketEntryMode: z.enum(["PLAYER", "TEAM"]).default("PLAYER"),
   bracketSeedingMode: z.enum(["RANDOM", "MANUAL"]).nullable().optional(),
   bracketAutoGenerate: z.boolean().default(false),
   bracketRequireCheckIn: z.boolean().default(false),
+  bracketGroupCount: z.number().int().min(2).max(16).default(2),
+  bracketAdvancersPerGroup: z.number().int().min(1).max(8).default(1),
+  bracketTiebreakMode: z.enum(["HEAD_TO_HEAD_THEN_SEED", "SEED"]).default("HEAD_TO_HEAD_THEN_SEED"),
 });
 
 type EventRow = RowDataPacket & {
@@ -90,9 +95,10 @@ export async function POST(request: NextRequest) {
          game_url, game_external_id, game_universe_id, game_thumbnail_url, required_connection_type,
          status, visibility, join_code_required, starts_at, signup_deadline,
          check_in_opens_at, check_in_deadline, max_participants, timezone,
-         bracket_enabled, bracket_format, bracket_seeding_mode, bracket_auto_generate,
-         bracket_require_check_in, staff_approval_required, created_by, primary_host_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         bracket_enabled, bracket_format, bracket_entry_mode, bracket_seeding_mode, bracket_auto_generate,
+         bracket_require_check_in, bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode,
+         staff_approval_required, created_by, primary_host_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         eventId, parsed.data.workspaceId, parsed.data.name, parsed.data.description ?? null, gameName,
         parsed.data.platformName ?? null, parsed.data.subgameName ?? null, parsed.data.gameUrl || null,
@@ -102,20 +108,33 @@ export async function POST(request: NextRequest) {
         parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null,
         parsed.data.checkInOpensAt ? new Date(parsed.data.checkInOpensAt) : null,
         parsed.data.checkInDeadline ? new Date(parsed.data.checkInDeadline) : null,
-        maximum, parsed.data.timezone, parsed.data.bracketEnabled ? 1 : 0, bracketFormat, seedingMode,
-        parsed.data.bracketAutoGenerate ? 1 : 0, parsed.data.bracketRequireCheckIn ? 1 : 0,
+        maximum, parsed.data.timezone, parsed.data.bracketEnabled ? 1 : 0, bracketFormat,
+        parsed.data.bracketEntryMode, seedingMode, parsed.data.bracketAutoGenerate ? 1 : 0,
+        parsed.data.bracketRequireCheckIn ? 1 : 0, parsed.data.bracketGroupCount,
+        parsed.data.bracketAdvancersPerGroup, parsed.data.bracketTiebreakMode,
         approvalRequired ? 1 : 0, session.userId, session.userId,
       ],
     );
     if (parsed.data.bracketEnabled && bracketFormat && seedingMode) {
-      await connection.execute(`INSERT INTO brackets (id, event_id, format, status, seeding_mode) VALUES (?, ?, ?, 'DRAFT', ?)`, [randomUUID(), eventId, bracketFormat, seedingMode]);
+      await connection.execute(
+        `INSERT INTO brackets (id, event_id, format, status, seeding_mode) VALUES (?, ?, ?, 'DRAFT', ?)`,
+        [randomUUID(), eventId, bracketFormat, seedingMode],
+      );
     }
   });
 
   await writeAuditLog({
     actorUserId: session.userId, workspaceId: parsed.data.workspaceId, eventId,
     action: "event.created", targetType: "event", targetId: eventId,
-    details: { initialStatus: "DRAFT", approvalRequired, visibility: parsed.data.visibility, platformName: parsed.data.platformName, bracketEnabled: parsed.data.bracketEnabled },
+    details: {
+      initialStatus: "DRAFT",
+      approvalRequired,
+      visibility: parsed.data.visibility,
+      platformName: parsed.data.platformName,
+      bracketEnabled: parsed.data.bracketEnabled,
+      bracketFormat,
+      bracketEntryMode: parsed.data.bracketEntryMode,
+    },
   });
   return NextResponse.json({ eventId, status: "DRAFT", approvalRequired }, { status: 201 });
 }
