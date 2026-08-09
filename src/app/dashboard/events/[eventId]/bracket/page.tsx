@@ -72,7 +72,7 @@ export default async function EventBracketPage({ params }: { params: Promise<{ e
     <div className="section-stack competitive-view-page">
       <section className="page-heading">
         <div><span className="eyebrow">Competitive event</span><h1>{event.name} bracket</h1><p>Follow the saved tournament results as the event progresses.</p></div>
-        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link>{canManageBracket ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage bracket</Link> : null}</div>
+        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/matches`}>Match Center</Link>{canManageBracket ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage bracket</Link> : null}</div>
       </section>
       <section className="panel section-stack"><BracketViewer state={state} status={bracket.status} /></section>
     </div>
