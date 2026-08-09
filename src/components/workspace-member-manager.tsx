@@ -16,6 +16,7 @@ type Member = {
   displayName: string;
   siteUsername: string | null;
   discordId: string;
+  discordUsername: string;
   role: string;
   displayLabel: string | null;
   status: string;
@@ -150,12 +151,11 @@ export function WorkspaceMemberManager({ workspaceId, members, ownerClaims }: { 
 
       {ownerClaims.length ? <div className="pending-owner-claims"><h3>Owner identity links</h3><p className="muted">Before first login, an Owner is shown by Discord ID. After they register, this automatically switches to their Game Night Tools identity while keeping the permanent Discord ownership link.</p>{ownerClaims.map((claim) => {
         const linkedMember = claim.activeUserId ? members.find((member) => member.userId === claim.activeUserId) ?? null : null;
-        const linked = Boolean(linkedMember);
-        return <article className={`list-card owner-claim-card${linked ? " owner-claim-connected" : ""}`} key={claim.discordId}>
+        return <article className={`list-card owner-claim-card${linkedMember ? " owner-claim-connected" : ""}`} key={claim.discordId}>
           {linkedMember?.avatarUrl ? <img className="access-avatar" src={linkedMember.avatarUrl} alt="" /> : <span className="list-icon">{linkedMember ? linkedMember.displayName.slice(0, 2) : "ID"}</span>}
           <div className="owner-claim-identity">
             <strong>{linkedMember?.displayName ?? claim.discordId}</strong>
-            {linkedMember ? <span>{linkedMember.siteUsername ? `@${linkedMember.siteUsername} · ` : ""}Discord: @{members.find((member) => member.userId === claim.activeUserId)?.displayName ? linkedMember.displayName : linkedMember.discordId}</span> : <span>Waiting for first website login</span>}
+            {linkedMember ? <span>{linkedMember.siteUsername ? `@${linkedMember.siteUsername} · ` : ""}Discord: @{linkedMember.discordUsername}</span> : <span>Waiting for first website login</span>}
             <small>{linkedMember ? `Owner account connected · Discord ID ${claim.discordId}` : `Pending Owner Discord ID ${claim.discordId}`} · Added {new Date(claim.createdAt).toLocaleString()}</small>
           </div>
           <button className="button button-danger" type="button" disabled={busy === claim.discordId} onClick={() => removeClaim(claim.discordId)}>Remove link</button>
