@@ -24,15 +24,28 @@
 - Completed bracket locking and audited status changes
 - PNG bracket export
 
-## Next — Tournament operations
+## v0.6 — Tournament Operations
 
-- Match scheduling and ready checks
-- Result confirmation between players/teams
-- Disputes, proof uploads, forfeits, and staff overrides with required reasons
-- More detailed match scoring and game/map results
+- Match Center for live bracket operations
+- Stable normalized entry and match IDs across bracket saves
+- Player ready checks and live match state
+- Match scheduling, best-of settings, no-show grace periods, and tournament pause/resume
+- Player-submitted results with scores, notes, and optional screenshot/video proof URLs
+- Opponent confirmation before normal results advance the bracket
+- Disputes with reasons/evidence and staff resolution
+- Staff result overrides, forfeits/no-shows, and required decision reasons
+- Confirmed results automatically advance both single-elimination and three-player brackets
+- Reopen/correct results with dependent downstream selections cleared safely
+- Match notifications, Discord webhook tournament updates, and audited match actions
+- Event standings, personal career wins/losses, current streaks, championships, and event head-to-head records
+
+## Next — Expanded competition formats and tools
+
 - Public share links for events that explicitly allow anonymous spectators
 - Round robin, double elimination, groups-to-playoffs, and team brackets
+- Structured per-game/map series breakdowns and map-by-map reporting
 - Scoreboards, timers, player picker, team generator, and game/map picker
+- Dedicated competitive profile pages and seasonal/server/game leaderboards
 
 ## Later — Optional Discord bot
 
