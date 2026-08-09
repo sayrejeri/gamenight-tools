@@ -39,7 +39,7 @@ export function CohostManager({ eventId, cohosts }: { eventId: string; cohosts: 
 
   async function save(cohost: Cohost, form: HTMLFormElement) {
     const data = new FormData(form);
-    const rawExpiration = String(data.get("expiresAt") ?? "").trim();
+    const rawExpiration = cohost.status === "PENDING" ? String(data.get("expiresAt") ?? "").trim() : "";
     setBusy(cohost.id); setMessage("");
     try {
       const response = await fetch(`/api/events/${eventId}/cohosts`, {
@@ -79,6 +79,7 @@ export function CohostManager({ eventId, cohosts }: { eventId: string; cohosts: 
       <div className="access-editor-list">
         {cohosts.map((cohost) => {
           const active = !["REVOKED", "DECLINED", "EXPIRED"].includes(cohost.status);
+          const pending = cohost.status === "PENDING";
           return <details className="access-editor-card" key={cohost.id}>
             <summary>
               {cohost.avatarUrl ? <img className="list-avatar" src={cohost.avatarUrl} alt="" /> : <span className="list-icon">{cohost.displayName.slice(0, 2)}</span>}
@@ -89,7 +90,7 @@ export function CohostManager({ eventId, cohosts }: { eventId: string; cohosts: 
             <form className="access-editor-body section-stack" onSubmit={(event) => { event.preventDefault(); void save(cohost, event.currentTarget); }}>
               <div className="two-column">
                 <div className="form-stack compact"><label>Co-host role</label><select name="permissionLevel" defaultValue={cohost.permissionLevel} disabled={!active}>{levels.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-                <div className="form-stack compact"><label>Access expires</label><input name="expiresAt" type="datetime-local" defaultValue={localInputValue(cohost.expiresAt)} disabled={!active} /><small className="muted">Leave blank for no expiration.</small></div>
+                <div className="form-stack compact"><label>Invitation deadline</label><input name="expiresAt" type="datetime-local" defaultValue={pending ? localInputValue(cohost.expiresAt) : ""} disabled={!active || !pending} /><small className="muted">{pending ? "This controls how long the invitation can be accepted. Leave blank for no deadline." : "The invitation deadline no longer applies after the co-host accepts."}</small></div>
               </div>
               <div className="cohost-permission-guide">{levels.map(([value, label, description]) => <div key={value}><strong>{label}</strong><span>{description}</span></div>)}</div>
               <div className="button-row">
