@@ -6,11 +6,17 @@ SET time_zone = '+00:00';
 
 ALTER TABLE bracket_entries
   ADD COLUMN participant_key VARCHAR(80) NULL AFTER user_id,
+  ADD COLUMN updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   ADD KEY bracket_entry_participant_idx (bracket_id, participant_key);
 
+-- Linked legacy entries can be backfilled deterministically in SQL.
 UPDATE bracket_entries
 SET participant_key = CONCAT('user-', user_id)
 WHERE participant_key IS NULL AND user_id IS NOT NULL;
+
+-- Legacy manual entries have no user_id and their old random draft participant IDs are only present
+-- in brackets.settings_json. Match Center resolves those entries against the exact source match by a
+-- unique saved display name, persists participant_key, and refuses ambiguous mappings instead of guessing.
 
 ALTER TABLE bracket_matches
   ADD COLUMN best_of TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER scheduled_at,
