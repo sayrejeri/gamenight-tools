@@ -13,7 +13,8 @@ type EventRow = RowDataPacket & {
   subgame_name: string | null; game_url: string | null; game_external_id: string | null; game_universe_id: string | null;
   game_thumbnail_url: string | null; required_connection_type: string | null; max_participants: number | null; timezone: string;
   visibility: string; join_code_required: number; bracket_enabled: number; bracket_format: string | null;
-  bracket_seeding_mode: string | null; bracket_auto_generate: number; bracket_require_check_in: number;
+  bracket_entry_mode: string; bracket_seeding_mode: string | null; bracket_auto_generate: number; bracket_require_check_in: number;
+  bracket_group_count: number; bracket_advancers_per_group: number; bracket_tiebreak_mode: string;
 };
 
 export async function POST(request: NextRequest, context: { params: Promise<{ eventId: string }> }) {
@@ -23,9 +24,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
   if (!parsed.success) return NextResponse.json({ error: "Enter a valid template name." }, { status: 400 });
   const { eventId } = await context.params;
   const events = await query<EventRow[]>(
-    `SELECT workspace_id, primary_host_id, name, description, platform_name, subgame_name, game_url, game_external_id,
+    `SELECT workspace_id, CAST(primary_host_id AS CHAR) AS primary_host_id, name, description, platform_name, subgame_name, game_url, game_external_id,
             game_universe_id, game_thumbnail_url, required_connection_type, max_participants, timezone, visibility,
-            join_code_required, bracket_enabled, bracket_format, bracket_seeding_mode, bracket_auto_generate, bracket_require_check_in
+            join_code_required, bracket_enabled, bracket_format, bracket_entry_mode, bracket_seeding_mode, bracket_auto_generate,
+            bracket_require_check_in, bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode
      FROM events WHERE id = ? LIMIT 1`, [eventId],
   );
   const event = events[0];
@@ -40,8 +42,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
     requiredConnectionType: event.required_connection_type ?? "", description: event.description ?? "",
     maxParticipants: event.max_participants === null ? "0" : String(event.max_participants), timezone: event.timezone,
     visibility: event.visibility, joinCodeRequired: Boolean(event.join_code_required), bracketEnabled: Boolean(event.bracket_enabled),
-    bracketFormat: event.bracket_format ?? "SINGLE_ELIMINATION", bracketSeedingMode: event.bracket_seeding_mode ?? "RANDOM",
-    bracketAutoGenerate: Boolean(event.bracket_auto_generate), bracketRequireCheckIn: Boolean(event.bracket_require_check_in),
+    bracketFormat: event.bracket_format ?? "SINGLE_ELIMINATION", bracketEntryMode: event.bracket_entry_mode ?? "PLAYER",
+    bracketSeedingMode: event.bracket_seeding_mode ?? "RANDOM", bracketAutoGenerate: Boolean(event.bracket_auto_generate),
+    bracketRequireCheckIn: Boolean(event.bracket_require_check_in), bracketGroupCount: event.bracket_group_count ?? 2,
+    bracketAdvancersPerGroup: event.bracket_advancers_per_group ?? 1, bracketTiebreakMode: event.bracket_tiebreak_mode ?? "HEAD_TO_HEAD_THEN_SEED",
   };
 
   const id = randomUUID();
