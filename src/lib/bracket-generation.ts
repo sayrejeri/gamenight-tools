@@ -1,18 +1,28 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { syncBracketRecords } from "@/lib/bracket-normalization";
-import type { BracketDraft } from "@/components/bracket/bracket-model";
+import {
+  buildDoubleEliminationCompetition,
+  buildFirstRound,
+  buildGroupsPlayoffCompetition,
+  buildRoundRobinCompetition,
+  type BracketDraft,
+  type Participant,
+  type TieBreakMode,
+} from "@/components/bracket/bracket-model";
 
 type ParticipantRow = RowDataPacket & {
   user_id: string;
   display_name: string;
 };
+type TeamRow = RowDataPacket & {
+  team_id: string;
+  display_name: string;
+  roster_json: string | null;
+};
 type BracketIdRow = RowDataPacket & { id: string };
 
-type Pair = [
-  { id: string; name: string } | null,
-  { id: string; name: string } | null,
-];
+export type DatabaseBracketFormat = "SINGLE_ELIMINATION" | "THREE_PLAYER" | "DOUBLE_ELIMINATION" | "ROUND_ROBIN" | "GROUPS_PLAYOFFS";
 
 function shuffle<T>(values: T[]): T[] {
   const copy = [...values];
@@ -23,50 +33,23 @@ function shuffle<T>(values: T[]): T[] {
   return copy;
 }
 
-function buildFirstRound(participants: Array<{ id: string; name: string }>): Pair[] {
-  const size = 2 ** Math.ceil(Math.log2(Math.max(2, participants.length)));
-  const pairCount = size / 2;
-  const byeCount = size - participants.length;
-  const playedMatchCount = pairCount - byeCount;
-  const playedPositions = new Set<number>();
-  for (let index = 0; index < playedMatchCount; index += 1) {
-    playedPositions.add(Math.floor(((index + 0.5) * pairCount) / playedMatchCount));
+function parseRoster(value: string | null): Participant["roster"] {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    return parsed.flatMap((member) => {
+      if (!member || typeof member !== "object") return [];
+      const item = member as { userId?: unknown; name?: unknown; role?: unknown };
+      if (typeof item.userId !== "string" || typeof item.name !== "string") return [];
+      return [{ userId: item.userId, name: item.name, role: typeof item.role === "string" ? item.role : undefined }];
+    });
+  } catch {
+    return undefined;
   }
-
-  const pairs: Pair[] = [];
-  let cursor = 0;
-  for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
-    const a = participants[cursor] ?? null;
-    cursor += 1;
-    if (playedPositions.has(pairIndex)) {
-      const b = participants[cursor] ?? null;
-      cursor += 1;
-      pairs.push([a, b]);
-    } else {
-      pairs.push([a, null]);
-    }
-  }
-  return pairs;
 }
 
-export async function generateEventBracket(
-  connection: PoolConnection,
-  {
-    eventId,
-    eventName,
-    format,
-    seedingMode,
-    requireCheckIn,
-  }: {
-    eventId: string;
-    eventName: string;
-    format: "SINGLE_ELIMINATION" | "THREE_PLAYER";
-    seedingMode: "RANDOM" | "MANUAL";
-    requireCheckIn: boolean;
-  },
-): Promise<{ generated: boolean; participantCount: number }> {
-  if (seedingMode === "MANUAL") return { generated: false, participantCount: 0 };
-
+async function loadPlayerEntrants(connection: PoolConnection, eventId: string, requireCheckIn: boolean): Promise<Participant[]> {
   const [rows] = await connection.query<ParticipantRow[]>(
     `SELECT CAST(ep.user_id AS CHAR) AS user_id,
             COALESCE(NULLIF(ep.game_identity_value, ''), u.global_name, u.username) AS display_name
@@ -78,52 +61,112 @@ export async function generateEventBracket(
      ORDER BY ep.joined_at ASC`,
     [eventId, requireCheckIn ? 1 : 0],
   );
+  return rows.map((row) => ({ id: `user-${row.user_id}`, name: row.display_name, entrantType: "player" as const }));
+}
 
-  if (format === "THREE_PLAYER" && rows.length !== 3) {
-    return { generated: false, participantCount: rows.length };
-  }
-  if (format === "SINGLE_ELIMINATION" && rows.length < 2) {
-    return { generated: false, participantCount: rows.length };
-  }
-
-  const participants = shuffle(rows.map((row) => ({
-    id: `user-${row.user_id}`,
+async function loadTeamEntrants(connection: PoolConnection, eventId: string): Promise<Participant[]> {
+  const [rows] = await connection.query<TeamRow[]>(
+    `SELECT ete.team_id, t.name AS display_name, ete.roster_json
+     FROM event_team_entries ete
+     INNER JOIN teams t ON t.id = ete.team_id
+     WHERE ete.event_id = ? AND ete.status = 'REGISTERED'
+     ORDER BY COALESCE(ete.seed_number, 2147483647), ete.registered_at ASC`,
+    [eventId],
+  );
+  return rows.map((row) => ({
+    id: `team-${row.team_id}`,
     name: row.display_name,
-  })));
+    entrantType: "team" as const,
+    teamId: row.team_id,
+    roster: parseRoster(row.roster_json),
+  }));
+}
 
-  const state: BracketDraft = format === "THREE_PLAYER"
-    ? {
-        version: 1,
-        title: eventName,
-        format: "three",
-        seedingMode: "random",
-        participants,
-        firstRound: [],
-        winners: {},
-        threeWinners: {},
-      }
-    : {
-        version: 1,
-        title: eventName,
-        format: "single",
-        seedingMode: "random",
-        participants,
-        firstRound: buildFirstRound(participants),
-        winners: {},
-        threeWinners: {},
-      };
+function buildDraft(input: {
+  eventName: string;
+  format: DatabaseBracketFormat;
+  participants: Participant[];
+  groupCount: number;
+  advancersPerGroup: number;
+  tieBreakMode: TieBreakMode;
+  entryMode: "PLAYER" | "TEAM";
+}): BracketDraft {
+  const base: BracketDraft = {
+    version: 2,
+    title: input.eventName,
+    format: "single",
+    seedingMode: "random",
+    participants: input.participants,
+    firstRound: [],
+    winners: {},
+    threeWinners: {},
+    entrantMode: input.entryMode === "TEAM" ? "team" : "player",
+    tieBreakMode: input.tieBreakMode,
+  };
+
+  if (input.format === "THREE_PLAYER") return { ...base, format: "three" };
+  if (input.format === "SINGLE_ELIMINATION") return { ...base, format: "single", firstRound: buildFirstRound(input.participants) };
+  if (input.format === "DOUBLE_ELIMINATION") {
+    return { ...base, format: "double", competitionMatches: buildDoubleEliminationCompetition(input.participants) };
+  }
+  if (input.format === "ROUND_ROBIN") {
+    return { ...base, format: "round_robin", competitionMatches: buildRoundRobinCompetition(input.participants) };
+  }
+  const groups = buildGroupsPlayoffCompetition(input.participants, input.groupCount, input.advancersPerGroup);
+  return {
+    ...base,
+    format: "groups",
+    groups: groups.groups,
+    groupAdvancers: groups.advancers,
+    competitionMatches: groups.matches,
+  };
+}
+
+export async function generateEventBracket(
+  connection: PoolConnection,
+  {
+    eventId,
+    eventName,
+    format,
+    seedingMode,
+    requireCheckIn,
+    entryMode = "PLAYER",
+    groupCount = 2,
+    advancersPerGroup = 1,
+    tieBreakMode = "HEAD_TO_HEAD_THEN_SEED",
+  }: {
+    eventId: string;
+    eventName: string;
+    format: DatabaseBracketFormat;
+    seedingMode: "RANDOM" | "MANUAL";
+    requireCheckIn: boolean;
+    entryMode?: "PLAYER" | "TEAM";
+    groupCount?: number;
+    advancersPerGroup?: number;
+    tieBreakMode?: TieBreakMode;
+  },
+): Promise<{ generated: boolean; participantCount: number }> {
+  if (seedingMode === "MANUAL") return { generated: false, participantCount: 0 };
+
+  const loaded = entryMode === "TEAM"
+    ? await loadTeamEntrants(connection, eventId)
+    : await loadPlayerEntrants(connection, eventId, requireCheckIn);
+
+  if (format === "THREE_PLAYER" && loaded.length !== 3) return { generated: false, participantCount: loaded.length };
+  if (["SINGLE_ELIMINATION", "DOUBLE_ELIMINATION"].includes(format) && loaded.length < 2) return { generated: false, participantCount: loaded.length };
+  if (format === "ROUND_ROBIN" && loaded.length < 2) return { generated: false, participantCount: loaded.length };
+  if (format === "GROUPS_PLAYOFFS" && loaded.length < 4) return { generated: false, participantCount: loaded.length };
+
+  const participants = shuffle(loaded);
+  const state = buildDraft({ eventName, format, participants, groupCount, advancersPerGroup, tieBreakMode, entryMode });
 
   await connection.execute(
     `INSERT INTO brackets (id, event_id, format, status, seeding_mode, settings_json, generated_at)
      VALUES (?, ?, ?, 'GENERATED', ?, ?, CURRENT_TIMESTAMP(3))
      ON DUPLICATE KEY UPDATE
-       format = VALUES(format),
-       status = 'GENERATED',
-       seeding_mode = VALUES(seeding_mode),
-       settings_json = VALUES(settings_json),
-       generated_at = CURRENT_TIMESTAMP(3),
-       completed_at = NULL,
-       updated_at = CURRENT_TIMESTAMP(3)`,
+       format = VALUES(format), status = 'GENERATED', seeding_mode = VALUES(seeding_mode),
+       settings_json = VALUES(settings_json), generated_at = CURRENT_TIMESTAMP(3),
+       completed_at = NULL, updated_at = CURRENT_TIMESTAMP(3)`,
     [randomUUID(), eventId, format, seedingMode, JSON.stringify(state)],
   );
 
