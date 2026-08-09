@@ -1,0 +1,69 @@
+name: v0.7 competition smoke
+
+on:
+  pull_request:
+    paths:
+      - "src/components/bracket/bracket-model.ts"
+      - "src/lib/bracket-results.ts"
+      - "src/lib/bracket-normalization.ts"
+      - "tests/v070-competition-smoke.cjs"
+      - ".github/workflows/v070-competition-smoke.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to test
+        required: true
+        default: feature/v0.7.0-expanded-competition-formats
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  competition-smoke:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Clone requested ref and run competition smoke tests
+        shell: powershell
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $targetRef = if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_REF)) { $env:REQUESTED_REF } else { $env:PR_HEAD_REF }
+          if ([string]::IsNullOrWhiteSpace($targetRef)) { throw "Could not determine the branch to test." }
+          if ($targetRef -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+
+          $safeRef = $targetRef.Replace("/", "-")
+          $work = Join-Path $env:RUNNER_TEMP "gamenight-v070-smoke-$safeRef"
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-v070-smoke"
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $work, $nodeRoot | Out-Null
+
+          git clone --depth 1 --branch "$targetRef" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+          Set-Location $work
+
+          $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
+          $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
+          if (-not $nodeVersion) { throw "Could not determine the latest Node.js 22 version." }
+          $nodeZip = Join-Path $env:RUNNER_TEMP "node22-v070-smoke.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip" -OutFile $nodeZip
+          Expand-Archive $nodeZip -DestinationPath $nodeRoot -Force
+          $nodeDir = Join-Path $nodeRoot "node-$nodeVersion-win-x64"
+          $env:Path = "$nodeDir;$env:Path"
+
+          npm install
+
+          $modelOut = Join-Path $work ".v070-model-test"
+          if (Test-Path $modelOut) { Remove-Item $modelOut -Recurse -Force }
+          npx tsc "src/components/bracket/bracket-model.ts" --target ES2022 --module commonjs --lib ES2022,DOM --outDir "$modelOut" --skipLibCheck --esModuleInterop
+          if ($LASTEXITCODE -ne 0) { throw "Could not compile bracket-model.ts for smoke tests." }
+
+          $compiled = Get-ChildItem -Path $modelOut -Filter "bracket-model.js" -Recurse | Select-Object -First 1
+          if (-not $compiled) { throw "Compiled bracket-model.js was not found." }
+          node "tests/v070-competition-smoke.cjs" "$($compiled.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "v0.7 competition smoke tests failed." }
