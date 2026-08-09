@@ -17,11 +17,12 @@ type MembershipRow = RowDataPacket & {
   discord_id: string;
   role: WorkspaceRole | null;
   status: "ACTIVE" | "SUSPENDED" | "REMOVED" | null;
+  expires_at: Date | null;
 };
 
 export async function getWorkspaceRole(userId: string, workspaceId: string): Promise<WorkspaceRole | null> {
   const rows = await query<MembershipRow[]>(
-    `SELECT u.discord_id, wm.role, wm.status
+    `SELECT u.discord_id, wm.role, wm.status, wm.expires_at
      FROM users u
      LEFT JOIN workspace_members wm
        ON wm.user_id = u.id AND wm.workspace_id = ?
@@ -32,7 +33,7 @@ export async function getWorkspaceRole(userId: string, workspaceId: string): Pro
   const row = rows[0];
   if (!row) return null;
   if (isPlatformOwner(row.discord_id)) return "OWNER";
-  if (row.status === "ACTIVE" && row.role) return row.role;
+  if (row.status === "ACTIVE" && row.role && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now())) return row.role;
 
   const platformRole = await getPlatformRole(userId);
   if (platformRole === "OWNER") return "OWNER";
@@ -49,6 +50,7 @@ export async function hasWorkspaceRole(
   return role ? roleRank[role] >= roleRank[minimumRole] : false;
 }
 
+// Legacy role helpers remain for routes not yet converted to granular capability checks.
 export function canHost(role: WorkspaceRole | null): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "STAFF" || role === "HOST";
 }
