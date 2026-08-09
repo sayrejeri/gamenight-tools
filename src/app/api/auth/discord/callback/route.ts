@@ -196,11 +196,18 @@ export async function GET(request: NextRequest) {
       }
 
       await connection.execute(
-        `INSERT INTO workspace_members (workspace_id, user_id, role, status, approved_by)
-         SELECT claim.workspace_id, ?, 'OWNER', 'ACTIVE', NULL
+        `INSERT INTO workspace_members
+          (workspace_id, user_id, role, display_label, permissions_json, status, expires_at, approved_by)
+         SELECT claim.workspace_id, ?, 'OWNER', 'Owner', NULL, 'ACTIVE', NULL, NULL
          FROM workspace_owner_claims claim
          WHERE claim.discord_id = ?
-         ON DUPLICATE KEY UPDATE role = 'OWNER', status = 'ACTIVE'`,
+         ON DUPLICATE KEY UPDATE
+           role = 'OWNER',
+           display_label = 'Owner',
+           permissions_json = NULL,
+           status = 'ACTIVE',
+           expires_at = NULL,
+           last_changed_at = CURRENT_TIMESTAMP(3)`,
         [currentUser.id, user.id],
       );
 
