@@ -33,6 +33,12 @@ ALTER TABLE audit_logs
   ADD COLUMN is_sensitive TINYINT(1) NOT NULL DEFAULT 0 AFTER severity,
   ADD KEY audit_logs_severity_created_idx (severity, created_at);
 
+ALTER TABLE teams
+  ADD COLUMN main_game_external_id VARCHAR(80) NULL AFTER main_game,
+  ADD COLUMN main_game_universe_id VARCHAR(80) NULL AFTER main_game_external_id,
+  ADD COLUMN main_game_url VARCHAR(1000) NULL AFTER main_game_universe_id,
+  ADD COLUMN main_game_thumbnail_url VARCHAR(1000) NULL AFTER main_game_url;
+
 -- Preserve the behavior users already had before granular permissions existed.
 UPDATE platform_staff_roles
 SET display_label = CASE role
