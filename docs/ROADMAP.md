@@ -39,13 +39,37 @@
 - Match notifications, Discord webhook tournament updates, and audited match actions
 - Event standings, personal career wins/losses, current streaks, championships, and event head-to-head records
 
-## Next — Expanded competition formats and tools
+## v0.7 — Expanded Competition Formats
 
-- Public share links for events that explicitly allow anonymous spectators
-- Round robin, double elimination, groups-to-playoffs, and team brackets
+- Double-elimination tournaments with winners/losers brackets and grand-final reset logic
+- Round-robin tournaments with live standings
+- Groups-to-playoffs with serpentine group seeding and automatic qualifier slots
+- Configurable standings tiebreaks using head-to-head then seed, or original seed/order
+- Team tournament entry mode using approved Game Night Tools teams
+- Event roster snapshots so team match authority does not change unexpectedly when a team profile changes
+- Team-aware ready checks, result reporting, opponent confirmation, disputes, forfeits, and Match Center notifications
+- Expanded stage metadata and stable normalized match IDs across all supported competition formats
+- Read-only spectator rendering and PNG export for all supported formats
+- Host-generated anonymous spectator links that expose only live/completed public competition state
+- Existing single-elimination and custom three-player formats remain supported by the same Match Center workflow
+
+## Next — v0.8 Game Night Tools & Series
+
 - Structured per-game/map series breakdowns and map-by-map reporting
-- Scoreboards, timers, player picker, team generator, and game/map picker
-- Dedicated competitive profile pages and seasonal/server/game leaderboards
+- Saved game/map pools and random selection without repeats
+- Scoreboards and score overlays
+- Game, round, and countdown timers
+- Player picker and team generator
+- Game/map picker for casual nights and tournament series
+- Better host live-event control screen
+
+## Later — Competitive Profiles & Leaderboards
+
+- Dedicated competitive profile pages
+- Seasonal, server, game, and all-time leaderboards
+- Full tournament history, placements, championships, and best streaks
+- Server leaderboards and game-specific statistics
+- Attendance and no-show history
 
 ## Later — Optional Discord bot
 
@@ -56,10 +80,8 @@
 - Optional role synchronization and temporary match channels
 - Clear failure handling when Discord privacy settings block DMs
 
-## Later — Community history
+## Later — Community history and event QOL
 
-- Server leaderboards and game-specific statistics
-- Player profiles, attendance, no-show history, wins, losses, and streaks
 - Reusable event, rule, signup, game, and announcement templates
 - Event recap generator and Discord-ready images
 - Prizes, claim status, and delivery records

@@ -3,15 +3,18 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import {
   bracketChampion,
+  deriveExpandedCompetitionMatches,
   deriveSingleElimination,
   resolveThreePlayerAdvancement,
   type BracketDraft,
+  type CompetitionStage,
   type Participant,
 } from "@/components/bracket/bracket-model";
 
 type ExistingEntryRow = RowDataPacket & {
   id: string;
   user_id: string | null;
+  team_id: string | null;
   participant_key: string | null;
   display_name: string;
   slot_number: number;
@@ -26,6 +29,7 @@ type ExistingMatchRow = RowDataPacket & {
   participant_c_entry_id: string | null;
   winner_entry_id: string | null;
   status: "PENDING" | "READY" | "LIVE" | "AWAITING_CONFIRMATION" | "DISPUTED" | "COMPLETED" | "FORFEIT";
+  result_json: string | null;
   scheduled_at: Date | null;
   best_of: number;
   ready_a_at: Date | null;
@@ -36,11 +40,67 @@ type ExistingMatchRow = RowDataPacket & {
   submitted_by: string | null;
   submitted_at: Date | null;
   confirmation_due_at: Date | null;
+  stage_key: string | null;
+  stage_label: string | null;
+  group_key: string | null;
+  bracket_side: string | null;
+  stage_round_number: number | null;
+};
+
+type NormalizedMatchInput = {
+  globalRoundNumber: number;
+  matchNumber: number;
+  stageKey: string;
+  stageLabel: string;
+  bracketSide: "MAIN" | "WINNERS" | "LOSERS" | "GROUP" | "PLAYOFF" | "FINALS";
+  stageRoundNumber: number;
+  groupKey?: string | null;
+  sourceMatchId: string;
+  a: Participant | null;
+  b: Participant | null;
+  c?: Participant | null;
+  winner: Participant | null;
+  active: boolean;
+  extraResult?: Record<string, unknown>;
 };
 
 function linkedUserId(participant: Participant): string | null {
+  if (participant.entrantType === "team") return null;
   const match = /^user-(\d+)$/.exec(participant.id);
   return match?.[1] ?? null;
+}
+
+function linkedTeamId(participant: Participant): string | null {
+  if (participant.teamId) return participant.teamId;
+  const match = /^team-([0-9a-f-]{36})$/i.exec(participant.id);
+  return match?.[1] ?? null;
+}
+
+function sourceMatchIdFromJson(value: string | null): string | null {
+  try {
+    const parsed = JSON.parse(value ?? "{}") as { sourceMatchId?: unknown };
+    return typeof parsed.sourceMatchId === "string" ? parsed.sourceMatchId : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseExistingResult(value: string | null): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value ?? "{}") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function bracketSideForStage(stage: CompetitionStage): NormalizedMatchInput["bracketSide"] {
+  if (stage === "winners") return "WINNERS";
+  if (stage === "losers") return "LOSERS";
+  if (stage === "group" || stage === "round_robin") return "GROUP";
+  if (stage === "playoff") return "PLAYOFF";
+  if (stage === "grand_final") return "FINALS";
+  return "MAIN";
 }
 
 async function resetMatchWorkflow(connection: PoolConnection, matchId: string, destructive: boolean): Promise<void> {
@@ -57,47 +117,121 @@ async function resetMatchWorkflow(connection: PoolConnection, matchId: string, d
   await connection.execute(
     `UPDATE match_disputes
      SET status = 'RESOLVED', resolution_action = 'VOID_REPORT',
-         resolution_note = 'Bracket result changed outside the match workflow.',
+         resolution_note = 'Competition result changed before or through tournament correction.',
          resolved_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
      WHERE match_id = ? AND status = 'OPEN'`,
     [matchId],
   );
 }
 
+function buildNormalizedMatches(draft: BracketDraft): NormalizedMatchInput[] {
+  if (draft.format === "single") {
+    return deriveSingleElimination(draft.firstRound, draft.winners).flatMap((round) => round.map((match) => ({
+      globalRoundNumber: match.round + 1,
+      matchNumber: match.index + 1,
+      stageKey: "main",
+      stageLabel: match.round === deriveSingleElimination(draft.firstRound, draft.winners).length - 1 ? "Final" : `Round ${match.round + 1}`,
+      bracketSide: "MAIN" as const,
+      stageRoundNumber: match.round + 1,
+      sourceMatchId: match.id,
+      a: match.a,
+      b: match.b,
+      winner: match.winner,
+      active: true,
+      extraResult: { automaticBye: Boolean(match.winner && (!match.a || !match.b)) },
+    })));
+  }
+
+  if (draft.format === "three") {
+    const result = resolveThreePlayerAdvancement(draft.participants, draft.threeWinners);
+    return [
+      { order: 1, a: result.playerA, b: result.playerB, winner: result.m1Winner },
+      { order: 2, a: result.playerC, b: result.m1Loser, winner: result.m2Winner },
+      { order: 3, a: result.playerC, b: result.m1Winner, winner: result.m3Winner },
+    ].map((match) => ({
+      globalRoundNumber: match.order,
+      matchNumber: 1,
+      stageKey: "three",
+      stageLabel: `Match ${match.order}`,
+      bracketSide: "MAIN" as const,
+      stageRoundNumber: match.order,
+      sourceMatchId: `m${match.order}`,
+      a: match.a,
+      b: match.b,
+      winner: match.winner,
+      active: true,
+      extraResult: { advancingParticipantId: match.order === 3 ? result.champion?.id ?? null : null },
+    }));
+  }
+
+  const resolved = deriveExpandedCompetitionMatches(draft);
+  const stageRounds = new Map<string, number>();
+  let globalRoundCounter = 0;
+  return resolved.map((match) => {
+    const stageRoundKey = `${match.stage}:${match.group ?? ""}:${match.round}`;
+    let globalRoundNumber = stageRounds.get(stageRoundKey);
+    if (!globalRoundNumber) {
+      globalRoundCounter += 1;
+      globalRoundNumber = globalRoundCounter;
+      stageRounds.set(stageRoundKey, globalRoundNumber);
+    }
+    return {
+      globalRoundNumber,
+      matchNumber: match.index + 1,
+      stageKey: match.stage,
+      stageLabel: match.label,
+      bracketSide: bracketSideForStage(match.stage),
+      stageRoundNumber: match.round,
+      groupKey: match.group ?? null,
+      sourceMatchId: match.id,
+      a: match.a,
+      b: match.b,
+      winner: match.winner,
+      active: match.active,
+      extraResult: {
+        format: draft.format,
+        stage: match.stage,
+        group: match.group ?? null,
+        conditionalInactive: !match.active,
+        automaticBye: Boolean(match.active && match.winner && (!match.a || !match.b)),
+      },
+    };
+  });
+}
+
 export async function syncBracketRecords(connection: PoolConnection, bracketId: string, draft: BracketDraft): Promise<void> {
   const [existingEntries] = await connection.query<ExistingEntryRow[]>(
-    `SELECT id, CAST(user_id AS CHAR) AS user_id, participant_key, display_name, slot_number
+    `SELECT id, CAST(user_id AS CHAR) AS user_id, team_id, participant_key, display_name, slot_number
      FROM bracket_entries WHERE bracket_id = ?`,
     [bracketId],
   );
   const [existingMatches] = await connection.query<ExistingMatchRow[]>(
     `SELECT id, round_number, match_number, participant_a_entry_id, participant_b_entry_id,
-            participant_c_entry_id, winner_entry_id, status, scheduled_at, best_of,
+            participant_c_entry_id, winner_entry_id, status, result_json, scheduled_at, best_of,
             ready_a_at, ready_b_at, started_at, completed_at, no_show_deadline_at,
-            CAST(submitted_by AS CHAR) AS submitted_by, submitted_at, confirmation_due_at
+            CAST(submitted_by AS CHAR) AS submitted_by, submitted_at, confirmation_due_at,
+            stage_key, stage_label, group_key, bracket_side, stage_round_number
      FROM bracket_matches WHERE bracket_id = ?`,
     [bracketId],
   );
 
   const champion = bracketChampion(draft);
   const eliminated = new Set<string>();
-
   if (draft.format === "single") {
     const rounds = deriveSingleElimination(draft.firstRound, draft.winners);
-    for (const round of rounds) {
-      for (const match of round) {
-        if (!match.winner || !match.a || !match.b) continue;
-        eliminated.add(match.winner.id === match.a.id ? match.b.id : match.a.id);
-      }
+    for (const match of rounds.flat()) {
+      if (!match.winner || !match.a || !match.b) continue;
+      eliminated.add(match.winner.id === match.a.id ? match.b.id : match.a.id);
     }
+  } else if (draft.format === "three" && champion) {
+    for (const participant of draft.participants) if (participant.id !== champion.id) eliminated.add(participant.id);
   } else if (champion) {
-    for (const participant of draft.participants) {
-      if (participant.id !== champion.id) eliminated.add(participant.id);
-    }
+    for (const participant of draft.participants) if (participant.id !== champion.id) eliminated.add(participant.id);
   }
 
   const byParticipantKey = new Map(existingEntries.filter((entry) => entry.participant_key).map((entry) => [entry.participant_key as string, entry]));
   const byUserId = new Map(existingEntries.filter((entry) => entry.user_id).map((entry) => [entry.user_id as string, entry]));
+  const byTeamId = new Map(existingEntries.filter((entry) => entry.team_id).map((entry) => [entry.team_id as string, entry]));
   const usedEntryIds = new Set<string>();
   const entryIds = new Map<string, string>();
 
@@ -107,10 +241,11 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
 
   for (const [index, participant] of draft.participants.entries()) {
     const userId = linkedUserId(participant);
-    let existing = byParticipantKey.get(participant.id) ?? (userId ? byUserId.get(userId) : undefined);
-    if (!existing) {
-      existing = existingEntries.find((entry) => !usedEntryIds.has(entry.id) && entry.display_name === participant.name);
-    }
+    const teamId = linkedTeamId(participant);
+    let existing = byParticipantKey.get(participant.id)
+      ?? (userId ? byUserId.get(userId) : undefined)
+      ?? (teamId ? byTeamId.get(teamId) : undefined);
+    if (!existing) existing = existingEntries.find((entry) => !usedEntryIds.has(entry.id) && entry.display_name === participant.name);
 
     const entryId = existing?.id ?? randomUUID();
     usedEntryIds.add(entryId);
@@ -120,36 +255,32 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
     if (existing) {
       await connection.execute(
         `UPDATE bracket_entries
-         SET user_id = ?, participant_key = ?, display_name = ?, seed_number = ?, slot_number = ?, status = ?
+         SET user_id = ?, team_id = ?, participant_key = ?, display_name = ?, seed_number = ?, slot_number = ?, status = ?
          WHERE id = ?`,
-        [userId, participant.id, participant.name, index + 1, index + 1, status, entryId],
+        [userId, teamId, participant.id, participant.name, index + 1, index + 1, status, entryId],
       );
     } else {
       await connection.execute(
         `INSERT INTO bracket_entries
-          (id, bracket_id, user_id, participant_key, display_name, seed_number, slot_number, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [entryId, bracketId, userId, participant.id, participant.name, index + 1, index + 1, status],
+          (id, bracket_id, user_id, team_id, participant_key, display_name, seed_number, slot_number, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [entryId, bracketId, userId, teamId, participant.id, participant.name, index + 1, index + 1, status],
       );
     }
   }
 
+  const existingMatchBySource = new Map<string, ExistingMatchRow>();
   const existingMatchByPosition = new Map(existingMatches.map((match) => [`${match.round_number}:${match.match_number}`, match]));
+  for (const match of existingMatches) {
+    const source = sourceMatchIdFromJson(match.result_json);
+    if (source) existingMatchBySource.set(source, match);
+  }
   const usedMatchIds = new Set<string>();
+  const normalizedMatches = buildNormalizedMatches(draft);
 
-  async function upsertMatch(input: {
-    roundNumber: number;
-    matchNumber: number;
-    sourceMatchId: string;
-    a: Participant | null;
-    b: Participant | null;
-    c?: Participant | null;
-    winner: Participant | null;
-    ready: boolean;
-    extraResult?: Record<string, unknown>;
-  }) {
-    const key = `${input.roundNumber}:${input.matchNumber}`;
-    const existing = existingMatchByPosition.get(key);
+  for (const input of normalizedMatches) {
+    const positionKey = `${input.globalRoundNumber}:${input.matchNumber}`;
+    const existing = existingMatchBySource.get(input.sourceMatchId) ?? existingMatchByPosition.get(positionKey);
     const matchId = existing?.id ?? randomUUID();
     usedMatchIds.add(matchId);
 
@@ -169,33 +300,36 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
     }
 
     let status: ExistingMatchRow["status"] = input.winner ? "COMPLETED" : "PENDING";
+    if (!input.active) status = "PENDING";
     if (
       existing
+      && input.active
       && !participantsChanged
       && !input.winner
       && ["READY", "LIVE", "AWAITING_CONFIRMATION", "DISPUTED"].includes(existing.status)
-    ) {
-      status = existing.status;
-    }
-    if (existing && input.winner && existing.winner_entry_id === winnerId && existing.status === "FORFEIT") {
-      status = "FORFEIT";
-    }
+    ) status = existing.status;
+    if (existing && input.winner && existing.winner_entry_id === winnerId && existing.status === "FORFEIT") status = "FORFEIT";
 
-    const resultJson = JSON.stringify({ sourceMatchId: input.sourceMatchId, ...(input.extraResult ?? {}) });
+    const preserveWorkflow = Boolean(existing && !participantsChanged && !resultChanged);
+    const previousResult = parseExistingResult(existing?.result_json ?? null);
+    const resultJson = JSON.stringify({
+      ...previousResult,
+      sourceMatchId: input.sourceMatchId,
+      ...(input.extraResult ?? {}),
+    });
 
     if (existing) {
-      const preserveWorkflow = !participantsChanged && !resultChanged;
       await connection.execute(
         `UPDATE bracket_matches
-         SET participant_a_entry_id = ?, participant_b_entry_id = ?, participant_c_entry_id = ?,
+         SET round_number = ?, match_number = ?, stage_key = ?, stage_label = ?, group_key = ?, bracket_side = ?, stage_round_number = ?,
+             participant_a_entry_id = ?, participant_b_entry_id = ?, participant_c_entry_id = ?,
              winner_entry_id = ?, status = ?, result_json = ?,
-             ready_a_at = ?, ready_b_at = ?,
-             started_at = ?,
+             ready_a_at = ?, ready_b_at = ?, started_at = ?,
              completed_at = CASE WHEN ? IN ('COMPLETED', 'FORFEIT') THEN COALESCE(completed_at, CURRENT_TIMESTAMP(3)) ELSE NULL END,
-             submitted_by = ?, submitted_at = ?, confirmation_due_at = ?,
-             updated_at = CURRENT_TIMESTAMP(3)
+             submitted_by = ?, submitted_at = ?, confirmation_due_at = ?, updated_at = CURRENT_TIMESTAMP(3)
          WHERE id = ?`,
         [
+          input.globalRoundNumber, input.matchNumber, input.stageKey, input.stageLabel, input.groupKey ?? null, input.bracketSide, input.stageRoundNumber,
           aId, bId, cId, winnerId, status, resultJson,
           preserveWorkflow ? existing.ready_a_at : null,
           preserveWorkflow ? existing.ready_b_at : null,
@@ -210,49 +344,14 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
     } else {
       await connection.execute(
         `INSERT INTO bracket_matches
-          (id, bracket_id, round_number, match_number, participant_a_entry_id, participant_b_entry_id,
-           participant_c_entry_id, winner_entry_id, status, result_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [matchId, bracketId, input.roundNumber, input.matchNumber, aId, bId, cId, winnerId, status, resultJson],
+          (id, bracket_id, round_number, match_number, stage_key, stage_label, group_key, bracket_side, stage_round_number,
+           participant_a_entry_id, participant_b_entry_id, participant_c_entry_id, winner_entry_id, status, result_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          matchId, bracketId, input.globalRoundNumber, input.matchNumber, input.stageKey, input.stageLabel, input.groupKey ?? null,
+          input.bracketSide, input.stageRoundNumber, aId, bId, cId, winnerId, status, resultJson,
+        ],
       );
-    }
-  }
-
-  if (draft.format === "single") {
-    const rounds = deriveSingleElimination(draft.firstRound, draft.winners);
-    for (const round of rounds) {
-      for (const match of round) {
-        await upsertMatch({
-          roundNumber: match.round + 1,
-          matchNumber: match.index + 1,
-          sourceMatchId: match.id,
-          a: match.a,
-          b: match.b,
-          winner: match.winner,
-          ready: Boolean(match.aReady && match.bReady && match.a && match.b),
-          extraResult: { automaticBye: Boolean(match.winner && (!match.a || !match.b)) },
-        });
-      }
-    }
-  } else {
-    const resolution = resolveThreePlayerAdvancement(draft.participants, draft.threeWinners);
-    const matches = [
-      { order: 1, a: resolution.playerA, b: resolution.playerB, winner: resolution.m1Winner },
-      { order: 2, a: resolution.playerC, b: resolution.m1Loser, winner: resolution.m2Winner },
-      { order: 3, a: resolution.playerC, b: resolution.m1Winner, winner: resolution.m3Winner },
-    ];
-
-    for (const match of matches) {
-      await upsertMatch({
-        roundNumber: match.order,
-        matchNumber: 1,
-        sourceMatchId: `m${match.order}`,
-        a: match.a,
-        b: match.b,
-        winner: match.winner,
-        ready: Boolean(match.a && match.b),
-        extraResult: { advancingParticipantId: match.order === 3 ? resolution.champion?.id ?? null : null },
-      });
     }
   }
 

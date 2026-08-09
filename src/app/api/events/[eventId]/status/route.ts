@@ -6,8 +6,8 @@ import { readSession } from "@/lib/auth";
 import { getPool, query, withTransaction } from "@/lib/db";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
-import { generateEventBracket } from "@/lib/bracket-generation";
-import { bracketChampion, isDraft } from "@/components/bracket/bracket-model";
+import { generateEventBracket, type DatabaseBracketFormat } from "@/lib/bracket-generation";
+import { bracketChampion, isDraft, type TieBreakMode } from "@/components/bracket/bracket-model";
 import { dispatchWorkspaceWebhooks, type WorkspaceWebhookNotification } from "@/lib/workspace-webhook-dispatch";
 
 const actionSchema = z.object({
@@ -16,17 +16,28 @@ const actionSchema = z.object({
 });
 
 type EventRow = RowDataPacket & {
-  id: string; workspace_id: string; workspace_name: string; name: string; game_label: string | null;
-  starts_at: Date | null; timezone: string; status: string; primary_host_id: string; staff_approval_required: number;
-  bracket_enabled: number; bracket_format: "SINGLE_ELIMINATION" | "THREE_PLAYER" | null;
-  bracket_seeding_mode: "RANDOM" | "MANUAL" | null; bracket_auto_generate: number; bracket_require_check_in: number;
-};
-
-type CompletionBracketRow = RowDataPacket & {
   id: string;
-  settings_json: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  name: string;
+  game_label: string | null;
+  starts_at: Date | null;
+  timezone: string;
+  status: string;
+  primary_host_id: string;
+  staff_approval_required: number;
+  bracket_enabled: number;
+  bracket_format: DatabaseBracketFormat | null;
+  bracket_entry_mode: "PLAYER" | "TEAM";
+  bracket_seeding_mode: "RANDOM" | "MANUAL" | null;
+  bracket_auto_generate: number;
+  bracket_require_check_in: number;
+  bracket_group_count: number;
+  bracket_advancers_per_group: number;
+  bracket_tiebreak_mode: TieBreakMode;
 };
 
+type CompletionBracketRow = RowDataPacket & { id: string; settings_json: string | null };
 class TransitionConflict extends Error {}
 
 const allowedFrom: Record<string, string[]> = {
@@ -37,6 +48,20 @@ const allowedFrom: Record<string, string[]> = {
   REOPEN_DRAFT: ["POSTPONED", "CANCELLED"],
 };
 
+function generationInput(event: EventRow) {
+  return {
+    eventId: event.id,
+    eventName: event.name,
+    format: event.bracket_format as DatabaseBracketFormat,
+    seedingMode: event.bracket_seeding_mode as "RANDOM" | "MANUAL",
+    requireCheckIn: Boolean(event.bracket_require_check_in),
+    entryMode: event.bracket_entry_mode,
+    groupCount: event.bracket_group_count,
+    advancersPerGroup: event.bracket_advancers_per_group,
+    tieBreakMode: event.bracket_tiebreak_mode,
+  };
+}
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ eventId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -46,9 +71,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const events = await query<EventRow[]>(
     `SELECT e.id, e.workspace_id, w.name AS workspace_name, e.name,
             COALESCE(e.subgame_name, e.game_name, e.platform_name) AS game_label,
-            e.starts_at, e.timezone, e.status, e.primary_host_id, e.staff_approval_required,
-            e.bracket_enabled, e.bracket_format, e.bracket_seeding_mode,
-            e.bracket_auto_generate, e.bracket_require_check_in
+            e.starts_at, e.timezone, e.status, CAST(e.primary_host_id AS CHAR) AS primary_host_id, e.staff_approval_required,
+            e.bracket_enabled, e.bracket_format, e.bracket_entry_mode, e.bracket_seeding_mode,
+            e.bracket_auto_generate, e.bracket_require_check_in, e.bracket_group_count,
+            e.bracket_advancers_per_group, e.bracket_tiebreak_mode
      FROM events e INNER JOIN workspaces w ON w.id = e.workspace_id WHERE e.id = ? LIMIT 1`,
     [eventId],
   );
@@ -81,26 +107,30 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   try {
     bracketResult = await withTransaction(async (connection) => {
       let result = { generated: false, participantCount: 0 };
-      if (["CLOSE_SIGNUPS", "OPEN_CHECKIN", "START"].includes(action) && event.bracket_enabled && event.bracket_auto_generate && event.bracket_format && event.bracket_seeding_mode) {
-        result = await generateEventBracket(connection, { eventId, eventName: event.name, format: event.bracket_format, seedingMode: event.bracket_seeding_mode, requireCheckIn: Boolean(event.bracket_require_check_in) });
+      if (["CLOSE_SIGNUPS", "OPEN_CHECKIN", "START"].includes(action)
+        && event.bracket_enabled && event.bracket_auto_generate && event.bracket_format && event.bracket_seeding_mode) {
+        result = await generateEventBracket(connection, generationInput(event));
       }
+
       if (action === "START" && event.bracket_enabled) {
         const [brackets] = await connection.query<(RowDataPacket & { settings_json: string | null })[]>(`SELECT settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`, [eventId]);
-        if (!brackets[0]?.settings_json) throw new TransitionConflict(event.bracket_seeding_mode === "MANUAL" ? "Place the approved participants and save the bracket before starting the event." : "The bracket could not be generated. Check that enough eligible participants are approved and checked in.");
-      }
-      if (action === "COMPLETE" && event.bracket_enabled) {
-        const [brackets] = await connection.query<CompletionBracketRow[]>(
-          `SELECT id, settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`,
-          [eventId],
-        );
-        const bracket = brackets[0];
-        if (!bracket?.settings_json) throw new TransitionConflict("Finish and save the tournament bracket before completing this event.");
-        let bracketState: unknown = null;
-        try { bracketState = JSON.parse(bracket.settings_json); } catch { bracketState = null; }
-        if (!isDraft(bracketState) || !bracketChampion(bracketState)) {
-          throw new TransitionConflict("Finish every required bracket match before completing this event.");
+        if (!brackets[0]?.settings_json) {
+          const entrantLabel = event.bracket_entry_mode === "TEAM" ? "registered teams" : "eligible participants";
+          throw new TransitionConflict(event.bracket_seeding_mode === "MANUAL"
+            ? `Place the ${entrantLabel} and save the competition before starting the event.`
+            : `The competition could not be generated. Check that enough ${entrantLabel} are ready.`);
         }
       }
+
+      if (action === "COMPLETE" && event.bracket_enabled) {
+        const [brackets] = await connection.query<CompletionBracketRow[]>(`SELECT id, settings_json FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`, [eventId]);
+        const bracket = brackets[0];
+        if (!bracket?.settings_json) throw new TransitionConflict("Finish and save the tournament competition before completing this event.");
+        let bracketState: unknown = null;
+        try { bracketState = JSON.parse(bracket.settings_json); } catch { bracketState = null; }
+        if (!isDraft(bracketState) || !bracketChampion(bracketState)) throw new TransitionConflict("Finish every required competition match before completing this event.");
+      }
+
       await connection.execute(
         `UPDATE events SET status = ?, approved_by = IF(? = 'APPROVE', ?, approved_by),
              approved_at = IF(? = 'APPROVE', CURRENT_TIMESTAMP(3), approved_at),
@@ -120,14 +150,22 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     throw error;
   }
 
-  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: `event.status.${nextStatus.toLowerCase()}`, targetType: "event", targetId: eventId, details: { previousStatus: event.status, action, reason: reason || null, bracketResult } });
+  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: `event.status.${nextStatus.toLowerCase()}`, targetType: "event", targetId: eventId, details: { previousStatus: event.status, action, reason: reason || null, bracketResult, bracketEntryMode: event.bracket_entry_mode } });
 
   if (action === "CANCEL") {
-    const recipients = await query<(RowDataPacket & { user_id: string })[]>(
-      `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants
-       WHERE event_id = ? AND status IN ('PENDING', 'APPROVED', 'WAITLISTED')`,
-      [eventId],
-    );
+    const recipients = event.bracket_entry_mode === "TEAM"
+      ? await query<(RowDataPacket & { user_id: string })[]>(
+          `SELECT DISTINCT CAST(tm.user_id AS CHAR) AS user_id
+           FROM event_team_entries ete INNER JOIN team_members tm ON tm.team_id = ete.team_id
+           WHERE ete.event_id = ? AND ete.status = 'REGISTERED' AND tm.status = 'ACTIVE'
+             AND tm.role IN ('OWNER', 'MANAGER', 'CAPTAIN', 'PLAYER', 'SUBSTITUTE')`,
+          [eventId],
+        )
+      : await query<(RowDataPacket & { user_id: string })[]>(
+          `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants
+           WHERE event_id = ? AND status IN ('PENDING', 'APPROVED', 'WAITLISTED')`,
+          [eventId],
+        );
     await Promise.allSettled(recipients.map((recipient) => getPool().execute(
       `INSERT INTO notifications (id, user_id, event_id, notification_type, category, title, message, action_url)
        VALUES (?, ?, ?, 'EVENT_CANCELLED', 'EVENTS', ?, ?, ?)`,
@@ -155,7 +193,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     });
   }
   if (bracketResult.generated) {
-    await dispatchWorkspaceWebhooks({ workspaceId: event.workspace_id, eventId, notificationType: "BRACKET_PUBLISHED", title: `${event.name} bracket generated`, description: `${bracketResult.participantCount} eligible participants were placed into the bracket.`, url: appUrl ? `${appUrl}/dashboard/events/${eventId}` : null });
+    const entrantLabel = event.bracket_entry_mode === "TEAM" ? "teams" : "participants";
+    await dispatchWorkspaceWebhooks({ workspaceId: event.workspace_id, eventId, notificationType: "BRACKET_PUBLISHED", title: `${event.name} competition generated`, description: `${bracketResult.participantCount} eligible ${entrantLabel} were placed into the competition.`, url: appUrl ? `${appUrl}/dashboard/events/${eventId}` : null });
   }
   return NextResponse.json({ status: nextStatus, bracketResult });
 }

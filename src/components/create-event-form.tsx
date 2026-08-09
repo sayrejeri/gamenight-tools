@@ -19,6 +19,8 @@ export type WorkspaceGameOption = {
   thumbnail_url: string | null;
 };
 
+type BracketFormat = "SINGLE_ELIMINATION" | "THREE_PLAYER" | "DOUBLE_ELIMINATION" | "ROUND_ROBIN" | "GROUPS_PLAYOFFS";
+
 type EventFormFields = {
   name: string;
   platformName: string;
@@ -38,10 +40,14 @@ type EventFormFields = {
   visibility: string;
   joinCodeRequired: boolean;
   bracketEnabled: boolean;
-  bracketFormat: "SINGLE_ELIMINATION" | "THREE_PLAYER";
+  bracketFormat: BracketFormat;
+  bracketEntryMode: "PLAYER" | "TEAM";
   bracketSeedingMode: "RANDOM" | "MANUAL";
   bracketAutoGenerate: boolean;
   bracketRequireCheckIn: boolean;
+  bracketGroupCount: number;
+  bracketAdvancersPerGroup: number;
+  bracketTiebreakMode: "HEAD_TO_HEAD_THEN_SEED" | "SEED";
 };
 
 function blankFields(timezone: string): EventFormFields {
@@ -65,9 +71,13 @@ function blankFields(timezone: string): EventFormFields {
     joinCodeRequired: true,
     bracketEnabled: false,
     bracketFormat: "SINGLE_ELIMINATION",
+    bracketEntryMode: "PLAYER",
     bracketSeedingMode: "RANDOM",
     bracketAutoGenerate: false,
     bracketRequireCheckIn: false,
+    bracketGroupCount: 2,
+    bracketAdvancersPerGroup: 1,
+    bracketTiebreakMode: "HEAD_TO_HEAD_THEN_SEED",
   };
 }
 
@@ -89,6 +99,7 @@ export function CreateEventForm({
   const [importing, setImporting] = useState(false);
 
   const isRoblox = fields.platformName.trim().toLowerCase() === "roblox";
+  const usesStandings = fields.bracketFormat === "ROUND_ROBIN" || fields.bracketFormat === "GROUPS_PLAYOFFS";
 
   function setField<K extends keyof EventFormFields>(key: K, value: EventFormFields[K]) {
     setFields((current) => ({ ...current, [key]: value }));
@@ -130,16 +141,9 @@ export function CreateEventForm({
       const response = await fetch(`/api/roblox/game?value=${encodeURIComponent(fields.gameUrl)}`);
       const body = await response.json() as {
         error?: string;
-        game?: {
-          placeId: string;
-          universeId: string | null;
-          name: string;
-          gameUrl: string;
-          thumbnailUrl: string | null;
-        };
+        game?: { placeId: string; universeId: string | null; name: string; gameUrl: string; thumbnailUrl: string | null };
       };
       if (!response.ok || !body.game) throw new Error(body.error ?? "Roblox game could not be imported.");
-
       setFields((current) => ({
         ...current,
         platformName: "Roblox",
@@ -163,7 +167,6 @@ export function CreateEventForm({
     setMessage("");
     const toIso = (value: string) => value ? new Date(value).toISOString() : null;
     const limit = fields.maxParticipants.trim() === "" ? 0 : Number(fields.maxParticipants);
-
     try {
       const response = await fetch("/api/events", {
         method: "POST",
@@ -183,6 +186,7 @@ export function CreateEventForm({
           requiredConnectionType: fields.requiredConnectionType || null,
           platformName: fields.platformName || null,
           subgameName: fields.subgameName || null,
+          bracketRequireCheckIn: fields.bracketEntryMode === "PLAYER" && fields.bracketRequireCheckIn,
         }),
       });
       const body = await response.json() as { error?: string; eventId?: string };
@@ -225,37 +229,18 @@ export function CreateEventForm({
         <div className="form-stack compact">
           <label htmlFor="platform-name">Main game category / platform</label>
           <input id="platform-name" list="platform-options" value={fields.platformName} onChange={(event) => setField("platformName", event.target.value)} placeholder="Roblox" maxLength={80} />
-          <datalist id="platform-options">
-            <option value="Roblox" />
-            <option value="Minecraft" />
-            <option value="Fortnite" />
-            <option value="Steam" />
-            <option value="Discord" />
-            <option value="Other" />
-          </datalist>
+          <datalist id="platform-options"><option value="Roblox" /><option value="Minecraft" /><option value="Fortnite" /><option value="Steam" /><option value="Discord" /><option value="Other" /></datalist>
         </div>
-        <div className="form-stack compact">
-          <label htmlFor="subgame-name">Game inside the platform</label>
-          <input id="subgame-name" value={fields.subgameName} onChange={(event) => setField("subgameName", event.target.value)} placeholder="Villagism" maxLength={191} />
-        </div>
+        <div className="form-stack compact"><label htmlFor="subgame-name">Game inside the platform</label><input id="subgame-name" value={fields.subgameName} onChange={(event) => setField("subgameName", event.target.value)} placeholder="Villagism" maxLength={191} /></div>
       </div>
 
       <label htmlFor="game-url">{isRoblox ? "Roblox experience link or Place ID" : "Game link"}</label>
       <div className="inline-form">
         <input id="game-url" value={fields.gameUrl} onChange={(event) => setField("gameUrl", event.target.value)} placeholder={isRoblox ? "https://www.roblox.com/games/..." : "https://..."} />
-        {isRoblox ? (
-          <button className="button button-secondary" type="button" disabled={importing || !fields.gameUrl.trim()} onClick={importRobloxGame}>
-            {importing ? "Importing…" : "Import Roblox game"}
-          </button>
-        ) : null}
+        {isRoblox ? <button className="button button-secondary" type="button" disabled={importing || !fields.gameUrl.trim()} onClick={importRobloxGame}>{importing ? "Importing…" : "Import Roblox game"}</button> : null}
       </div>
 
-      {fields.gameThumbnailUrl ? (
-        <div className="game-preview">
-          <img src={fields.gameThumbnailUrl} alt="" />
-          <div><span className="card-kicker">{fields.platformName || "Game"}</span><strong>{fields.subgameName || "Imported game"}</strong><span className="muted">This artwork will appear on the event page.</span></div>
-        </div>
-      ) : null}
+      {fields.gameThumbnailUrl ? <div className="game-preview"><img src={fields.gameThumbnailUrl} alt="" /><div><span className="card-kicker">{fields.platformName || "Game"}</span><strong>{fields.subgameName || "Imported game"}</strong><span className="muted">This artwork will appear on the event page.</span></div></div> : null}
 
       <label htmlFor="event-description">Description</label>
       <textarea id="event-description" value={fields.description} onChange={(event) => setField("description", event.target.value)} rows={4} maxLength={5000} />
@@ -271,58 +256,59 @@ export function CreateEventForm({
 
       <div className="two-column">
         <div className="form-stack compact">
-          <label htmlFor="max-participants">Maximum participants</label>
+          <label htmlFor="max-participants">Maximum {fields.bracketEnabled && fields.bracketEntryMode === "TEAM" ? "teams" : "participants"}</label>
           <input id="max-participants" type="number" min={0} max={10000} value={fields.maxParticipants} onChange={(event) => setField("maxParticipants", event.target.value)} />
           <span className="field-help">Enter 0 or leave blank for unlimited.</span>
         </div>
-        <div className="form-stack compact">
-          <label htmlFor="event-timezone">Host timezone</label>
-          <input id="event-timezone" value={fields.timezone} onChange={(event) => setField("timezone", event.target.value)} required />
-          <span className="field-help">Viewers automatically see times in their local timezone.</span>
-        </div>
+        <div className="form-stack compact"><label htmlFor="event-timezone">Host timezone</label><input id="event-timezone" value={fields.timezone} onChange={(event) => setField("timezone", event.target.value)} required /><span className="field-help">Viewers automatically see times in their local timezone.</span></div>
       </div>
 
       <div className="two-column">
-        <div className="form-stack compact">
-          <label htmlFor="required-connection">Required game identity</label>
-          <input id="required-connection" list="platform-options" value={fields.requiredConnectionType} onChange={(event) => setField("requiredConnectionType", event.target.value)} placeholder="Roblox" />
-        </div>
-        <div className="form-stack compact">
-          <label htmlFor="event-visibility">Visibility</label>
-          <select id="event-visibility" value={fields.visibility} onChange={(event) => setField("visibility", event.target.value)}>
-            <option value="SERVER">Discord server members</option>
-            <option value="CODE_ONLY">Code only</option>
-            <option value="UNLISTED">Unlisted link</option>
-            <option value="PUBLIC">All logged-in users</option>
-            <option value="STAFF_ONLY">Staff only</option>
-          </select>
-        </div>
+        <div className="form-stack compact"><label htmlFor="required-connection">Required game identity</label><input id="required-connection" list="platform-options" value={fields.requiredConnectionType} onChange={(event) => setField("requiredConnectionType", event.target.value)} placeholder="Roblox" /></div>
+        <div className="form-stack compact"><label htmlFor="event-visibility">Visibility</label><select id="event-visibility" value={fields.visibility} onChange={(event) => setField("visibility", event.target.value)}><option value="SERVER">Discord server members</option><option value="CODE_ONLY">Code only</option><option value="UNLISTED">Unlisted link</option><option value="PUBLIC">All logged-in users</option><option value="STAFF_ONLY">Staff only</option></select></div>
       </div>
 
       <label className="checkbox-row"><input type="checkbox" checked={fields.joinCodeRequired} onChange={(event) => setField("joinCodeRequired", event.target.checked)} />Require an event join code to sign up</label>
 
       <section className="subpanel form-stack">
-        <label className="checkbox-row"><input type="checkbox" checked={fields.bracketEnabled} onChange={(event) => setField("bracketEnabled", event.target.checked)} />Use the built-in bracket tool</label>
+        <label className="checkbox-row"><input type="checkbox" checked={fields.bracketEnabled} onChange={(event) => setField("bracketEnabled", event.target.checked)} />Use built-in tournament competition tools</label>
         {fields.bracketEnabled ? (
           <>
             <div className="two-column">
               <div className="form-stack compact">
-                <label htmlFor="bracket-format">Bracket format</label>
-                <select id="bracket-format" value={fields.bracketFormat} onChange={(event) => setField("bracketFormat", event.target.value as EventFormFields["bracketFormat"])}>
+                <label htmlFor="bracket-format">Competition format</label>
+                <select id="bracket-format" value={fields.bracketFormat} onChange={(event) => setField("bracketFormat", event.target.value as BracketFormat)}>
                   <option value="SINGLE_ELIMINATION">Single elimination</option>
-                  <option value="THREE_PLAYER">Three-player advancement</option>
+                  <option value="DOUBLE_ELIMINATION">Double elimination</option>
+                  <option value="ROUND_ROBIN">Round robin</option>
+                  <option value="GROUPS_PLAYOFFS">Groups → playoffs</option>
+                  <option value="THREE_PLAYER">Three-player custom advancement</option>
                 </select>
               </div>
               <div className="form-stack compact">
-                <label htmlFor="bracket-placement">Initial placement</label>
-                <select id="bracket-placement" value={fields.bracketSeedingMode} onChange={(event) => setField("bracketSeedingMode", event.target.value as EventFormFields["bracketSeedingMode"])}>
-                  <option value="RANDOM">System places participants randomly</option>
-                  <option value="MANUAL">Host places participants manually</option>
+                <label htmlFor="bracket-entry-mode">Entrants</label>
+                <select id="bracket-entry-mode" value={fields.bracketEntryMode} onChange={(event) => setField("bracketEntryMode", event.target.value as EventFormFields["bracketEntryMode"])}>
+                  <option value="PLAYER">Individual players</option>
+                  <option value="TEAM">Registered teams</option>
                 </select>
               </div>
             </div>
-            <label className="checkbox-row"><input type="checkbox" checked={fields.bracketAutoGenerate} disabled={fields.bracketSeedingMode === "MANUAL"} onChange={(event) => setField("bracketAutoGenerate", event.target.checked)} />Automatically build the bracket when signups close</label>
-            <label className="checkbox-row"><input type="checkbox" checked={fields.bracketRequireCheckIn} onChange={(event) => setField("bracketRequireCheckIn", event.target.checked)} />Only include approved participants who checked in</label>
+
+            <div className="two-column">
+              <div className="form-stack compact"><label htmlFor="bracket-placement">Initial placement</label><select id="bracket-placement" value={fields.bracketSeedingMode} onChange={(event) => setField("bracketSeedingMode", event.target.value as EventFormFields["bracketSeedingMode"])}><option value="RANDOM">System places entrants randomly</option><option value="MANUAL">Host controls seeding/order</option></select></div>
+              {usesStandings ? <div className="form-stack compact"><label htmlFor="bracket-tiebreak">Standings tiebreak</label><select id="bracket-tiebreak" value={fields.bracketTiebreakMode} onChange={(event) => setField("bracketTiebreakMode", event.target.value as EventFormFields["bracketTiebreakMode"])}><option value="HEAD_TO_HEAD_THEN_SEED">Head-to-head, then seed</option><option value="SEED">Original seed/order</option></select></div> : <div className="rule-callout"><strong>{fields.bracketFormat === "DOUBLE_ELIMINATION" ? "Two-loss elimination" : fields.bracketFormat === "THREE_PLAYER" ? "Custom A/B/C rule" : "Direct elimination"}</strong><p>Match Center handles live results, confirmation, disputes, forfeits, and automatic advancement.</p></div>}
+            </div>
+
+            {fields.bracketFormat === "GROUPS_PLAYOFFS" ? (
+              <div className="two-column">
+                <div className="form-stack compact"><label htmlFor="group-count">Number of groups</label><input id="group-count" type="number" min={2} max={16} value={fields.bracketGroupCount} onChange={(event) => setField("bracketGroupCount", Math.max(2, Math.min(16, Number(event.target.value) || 2)))} /></div>
+                <div className="form-stack compact"><label htmlFor="group-advancers">Advance from each group</label><input id="group-advancers" type="number" min={1} max={8} value={fields.bracketAdvancersPerGroup} onChange={(event) => setField("bracketAdvancersPerGroup", Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></div>
+              </div>
+            ) : null}
+
+            {fields.bracketEntryMode === "TEAM" ? <div className="rule-callout"><strong>Team tournament</strong><p>Team owners, managers, and captains can register a team. The event snapshots the active roster so Match Center can show who belongs to each side.</p></div> : null}
+            <label className="checkbox-row"><input type="checkbox" checked={fields.bracketAutoGenerate} disabled={fields.bracketSeedingMode === "MANUAL"} onChange={(event) => setField("bracketAutoGenerate", event.target.checked)} />Automatically build the competition when signups close</label>
+            {fields.bracketEntryMode === "PLAYER" ? <label className="checkbox-row"><input type="checkbox" checked={fields.bracketRequireCheckIn} onChange={(event) => setField("bracketRequireCheckIn", event.target.checked)} />Only include approved participants who checked in</label> : null}
           </>
         ) : null}
       </section>

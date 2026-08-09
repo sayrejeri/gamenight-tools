@@ -21,6 +21,7 @@ type EventRow = RowDataPacket & {
   max_participants: number | null;
   join_code_required: number;
   required_connection_type: string | null;
+  bracket_entry_mode: "PLAYER" | "TEAM";
 };
 
 type ConnectionRow = RowDataPacket & {
@@ -42,7 +43,7 @@ export async function POST(
 
   const events = await query<EventRow[]>(
     `SELECT id, name, status, signup_mode, signup_deadline, check_in_opens_at, check_in_deadline,
-            max_participants, join_code_required, required_connection_type
+            max_participants, join_code_required, required_connection_type, bracket_entry_mode
      FROM events WHERE id = ? LIMIT 1`,
     [eventId],
   );
@@ -67,7 +68,7 @@ export async function POST(
         [eventId, session.userId],
       );
 
-      if (event.max_participants && existingParticipant.status === "APPROVED") {
+      if (event.bracket_entry_mode === "PLAYER" && event.max_participants && existingParticipant.status === "APPROVED") {
         const [waitlist] = await connection.query<(RowDataPacket & { user_id: string })[]>(
           `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants
            WHERE event_id = ? AND status = 'WAITLISTED'
@@ -91,6 +92,13 @@ export async function POST(
       return null;
     });
     return NextResponse.json({ status: "WITHDRAWN", promotedWaitlistUser: Boolean(promoted) });
+  }
+
+  if (event.bracket_entry_mode === "TEAM") {
+    return NextResponse.json(
+      { error: "This event uses team registration. Register or manage your team from the tournament teams page." },
+      { status: 409 },
+    );
   }
 
   if (parsed.data.action === "CHECK_IN") {
@@ -175,13 +183,7 @@ export async function POST(
          game_identity_type = VALUES(game_identity_type),
          game_identity_value = VALUES(game_identity_value),
          signup_completed_at = VALUES(signup_completed_at)`,
-      [
-        eventId,
-        session.userId,
-        status,
-        selectedConnection?.connection_type ?? null,
-        selectedConnection?.handle ?? null,
-      ],
+      [eventId, session.userId, status, selectedConnection?.connection_type ?? null, selectedConnection?.handle ?? null],
     );
 
     return status;
