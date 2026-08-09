@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
-import { canManageCodes, getWorkspaceRole } from "@/lib/access";
 import { query, withTransaction } from "@/lib/db";
+import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 import { generateEventBracket } from "@/lib/bracket-generation";
 import { dispatchWorkspaceWebhooks, type WorkspaceWebhookNotification } from "@/lib/workspace-webhook-dispatch";
@@ -13,21 +13,10 @@ const actionSchema = z.object({
 });
 
 type EventRow = RowDataPacket & {
-  id: string;
-  workspace_id: string;
-  workspace_name: string;
-  name: string;
-  game_label: string | null;
-  starts_at: Date | null;
-  timezone: string;
-  status: string;
-  primary_host_id: string;
-  staff_approval_required: number;
-  bracket_enabled: number;
-  bracket_format: "SINGLE_ELIMINATION" | "THREE_PLAYER" | null;
-  bracket_seeding_mode: "RANDOM" | "MANUAL" | null;
-  bracket_auto_generate: number;
-  bracket_require_check_in: number;
+  id: string; workspace_id: string; workspace_name: string; name: string; game_label: string | null;
+  starts_at: Date | null; timezone: string; status: string; primary_host_id: string; staff_approval_required: number;
+  bracket_enabled: number; bracket_format: "SINGLE_ELIMINATION" | "THREE_PLAYER" | null;
+  bracket_seeding_mode: "RANDOM" | "MANUAL" | null; bracket_auto_generate: number; bracket_require_check_in: number;
 };
 
 class TransitionConflict extends Error {}
@@ -58,21 +47,24 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const event = events[0];
   if (!event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
 
-  const role = await getWorkspaceRole(session.userId, event.workspace_id);
   const cohost = await query<(RowDataPacket & { permission_level: string })[]>(
     `SELECT permission_level FROM event_cohosts WHERE event_id = ? AND invited_user_id = ? AND status = 'ACCEPTED' LIMIT 1`,
     [eventId, session.userId],
   );
+  const [workspaceManage, canApprove] = await Promise.all([
+    hasWorkspacePermission(session.userId, event.workspace_id, "MANAGE_EVENTS"),
+    hasWorkspacePermission(session.userId, event.workspace_id, "APPROVE_EVENTS"),
+  ]);
   const isPrimaryHost = event.primary_host_id === session.userId;
-  const canManage = isPrimaryHost || canManageCodes(role) || cohost[0]?.permission_level === "FULL";
+  const canManage = isPrimaryHost || workspaceManage || cohost[0]?.permission_level === "FULL";
   if (!canManage) return NextResponse.json({ error: "You cannot manage this event." }, { status: 403 });
 
   const action = parsed.data.action;
   if (!allowedFrom[action]?.includes(event.status)) return NextResponse.json({ error: `That action is not available while the event is ${event.status.toLowerCase()}.` }, { status: 409 });
-  if (action === "APPROVE" && !canManageCodes(role)) return NextResponse.json({ error: "Server staff must approve this event." }, { status: 403 });
+  if (action === "APPROVE" && !canApprove) return NextResponse.json({ error: "Event-approval permission is required." }, { status: 403 });
 
   let nextStatus: string;
-  if (action === "PUBLISH") nextStatus = event.staff_approval_required && !canManageCodes(role) ? "AWAITING_APPROVAL" : "SIGNUPS_OPEN";
+  if (action === "PUBLISH") nextStatus = event.staff_approval_required && !canApprove ? "AWAITING_APPROVAL" : "SIGNUPS_OPEN";
   else nextStatus = { SUBMIT_APPROVAL: "AWAITING_APPROVAL", APPROVE: "SIGNUPS_OPEN", CLOSE_SIGNUPS: "SIGNUPS_CLOSED", OPEN_CHECKIN: "CHECK_IN_OPEN", START: "LIVE", COMPLETE: "COMPLETED", POSTPONE: "POSTPONED", CANCEL: "CANCELLED", REOPEN_DRAFT: "DRAFT" }[action] ?? event.status;
 
   let bracketResult: { generated: boolean; participantCount: number };
@@ -127,6 +119,5 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   if (bracketResult.generated) {
     await dispatchWorkspaceWebhooks({ workspaceId: event.workspace_id, eventId, notificationType: "BRACKET_PUBLISHED", title: `${event.name} bracket generated`, description: `${bracketResult.participantCount} eligible participants were placed into the bracket.`, url: appUrl ? `${appUrl}/dashboard/events/${eventId}` : null });
   }
-
   return NextResponse.json({ status: nextStatus, bracketResult });
 }
