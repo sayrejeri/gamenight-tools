@@ -11,7 +11,7 @@ type Webhook = {
 const notificationOptions = [
   ["EVENT_PUBLISHED", "Event published"], ["SIGNUPS_CLOSED", "Signups closed"], ["CHECK_IN_OPEN", "Check-in opened"],
   ["EVENT_LIVE", "Event started"], ["EVENT_COMPLETED", "Event completed"], ["EVENT_CANCELLED", "Event cancelled"],
-  ["BRACKET_PUBLISHED", "Bracket published"], ["SUGGESTION_UPDATE", "Suggestion update"],
+  ["BRACKET_PUBLISHED", "Bracket published"], ["MATCH_UPDATE", "Tournament match updates"], ["SUGGESTION_UPDATE", "Suggestion update"],
   ["COMMUNITY_ANNOUNCEMENT", "Community chat announcement"],
 ] as const;
 
@@ -107,7 +107,7 @@ export function WorkspaceWebhookForm({ workspaceId, webhooks }: { workspaceId: s
         <div><h3>Add another Discord webhook</h3><p className="muted">Each server can have multiple webhook destinations. The full URL is encrypted and is never displayed again.</p></div>
         <div className="two-column"><div className="form-stack compact"><label>Private label</label><input name="label" placeholder="Event announcements" required /></div><div className="form-stack compact"><label>Discord webhook URL <InfoTip text="In Discord, create a webhook for the channel and paste its full https://discord.com/api/webhooks/... URL here. Game Night Tools encrypts it before storage." /></label><input name="url" type="url" placeholder="https://discord.com/api/webhooks/..." required /></div></div>
         <div className="two-column"><div className="form-stack compact"><label>Sender name</label><input name="usernameOverride" placeholder="Game Night Tools" /></div><div className="form-stack compact"><label>Sender avatar URL</label><input name="avatarUrl" type="url" placeholder="https://..." /></div></div>
-        <div className="settings-check-grid">{notificationOptions.map(([value, text]) => <label className="checkbox-row" key={value}><input name={value} type="checkbox" defaultChecked={value === "EVENT_PUBLISHED" || value === "EVENT_COMPLETED" || value === "BRACKET_PUBLISHED"} />{text}</label>)}</div>
+        <div className="settings-check-grid">{notificationOptions.map(([value, text]) => <label className="checkbox-row" key={value}><input name={value} type="checkbox" defaultChecked={value === "EVENT_PUBLISHED" || value === "EVENT_COMPLETED" || value === "BRACKET_PUBLISHED" || value === "MATCH_UPDATE"} />{text}</label>)}</div>
         <button className="button" disabled={busy === "new"}>{busy === "new" ? "Saving…" : "Add webhook"}</button>
       </form>
       {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
