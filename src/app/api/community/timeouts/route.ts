@@ -53,11 +53,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Community Owners cannot be timed out from their own chat." }, { status: 403 });
   }
 
+  const expiresAt = new Date(Date.now() + durationMinutes * 60_000);
   await getPool().execute(
     `INSERT INTO community_chat_timeouts (scope_type, scope_id, user_id, expires_at, reason, created_by)
-     VALUES (?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL ? MINUTE), ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), reason = VALUES(reason), created_by = VALUES(created_by), updated_at = CURRENT_TIMESTAMP(3)`,
-    [scopeType, scopeId, userId, durationMinutes, reason || null, session.userId],
+    [scopeType, scopeId, userId, expiresAt, reason || null, session.userId],
   );
   await writeAuditLog({
     actorUserId: session.userId,
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
     details: { scopeType, scopeId, durationMinutes, reason: reason || null },
   });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, expiresAt: expiresAt.toISOString() });
 }
 
 export async function DELETE(request: NextRequest) {
