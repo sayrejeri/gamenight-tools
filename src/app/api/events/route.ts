@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
-import { canHost, getWorkspaceRole } from "@/lib/access";
+import { getWorkspaceRole } from "@/lib/access";
+import { hasWorkspacePermission } from "@/lib/permissions";
 import { query, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -36,56 +37,37 @@ const createEventSchema = z.object({
 });
 
 type EventRow = RowDataPacket & {
-  id: string;
-  workspace_id: string;
-  workspace_name: string;
-  name: string;
-  game_name: string | null;
-  platform_name: string | null;
-  subgame_name: string | null;
-  game_thumbnail_url: string | null;
-  status: string;
-  visibility: string;
-  starts_at: Date | null;
+  id: string; workspace_id: string; workspace_name: string; name: string; game_name: string | null;
+  platform_name: string | null; subgame_name: string | null; game_thumbnail_url: string | null;
+  status: string; visibility: string; starts_at: Date | null;
 };
 
 export async function GET() {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-
   const events = await query<EventRow[]>(
     `SELECT e.id, e.workspace_id, w.name AS workspace_name, e.name, e.game_name,
-            e.platform_name, e.subgame_name, e.game_thumbnail_url,
-            e.status, e.visibility, e.starts_at
+            e.platform_name, e.subgame_name, e.game_thumbnail_url, e.status, e.visibility, e.starts_at
      FROM events e
      INNER JOIN workspaces w ON w.id = e.workspace_id
-     LEFT JOIN workspace_members wm
-       ON wm.workspace_id = e.workspace_id AND wm.user_id = ? AND wm.status = 'ACTIVE'
-     LEFT JOIN user_guilds ug
-       ON ug.user_id = ? AND ug.guild_id = w.discord_guild_id
-     WHERE e.visibility = 'PUBLIC'
-        OR wm.user_id IS NOT NULL
-        OR (ug.user_id IS NOT NULL AND e.visibility = 'SERVER')
+     LEFT JOIN workspace_members wm ON wm.workspace_id = e.workspace_id AND wm.user_id = ? AND wm.status = 'ACTIVE'
+     LEFT JOIN user_guilds ug ON ug.user_id = ? AND ug.guild_id = w.discord_guild_id
+     WHERE e.visibility = 'PUBLIC' OR wm.user_id IS NOT NULL OR (ug.user_id IS NOT NULL AND e.visibility = 'SERVER')
      ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC`,
     [session.userId, session.userId],
   );
-
   return NextResponse.json({ events });
 }
 
 export async function POST(request: NextRequest) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-
   const parsed = createEventSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid event information.", details: parsed.error.flatten() }, { status: 400 });
-  }
+  if (!parsed.success) return NextResponse.json({ error: "Invalid event information.", details: parsed.error.flatten() }, { status: 400 });
 
+  const canHost = await hasWorkspacePermission(session.userId, parsed.data.workspaceId, "HOST_EVENTS");
+  if (!canHost) return NextResponse.json({ error: "You do not have permission to host events for this server." }, { status: 403 });
   const role = await getWorkspaceRole(session.userId, parsed.data.workspaceId);
-  if (!canHost(role)) {
-    return NextResponse.json({ error: "You must be staff or an approved host for this server." }, { status: 403 });
-  }
 
   const [workspace] = await query<(RowDataPacket & { approval_required: number })[]>(
     `SELECT default_staff_approval_required AS approval_required FROM workspaces WHERE id = ? LIMIT 1`,
@@ -94,16 +76,11 @@ export async function POST(request: NextRequest) {
   if (!workspace) return NextResponse.json({ error: "Server profile not found." }, { status: 404 });
 
   const eventId = randomUUID();
-  const approvalRequired = role === "HOST" && Boolean(workspace.approval_required);
-  const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0
-    ? parsed.data.maxParticipants
-    : null;
-  const bracketFormat = parsed.data.bracketEnabled
-    ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION"
-    : null;
-  const seedingMode = parsed.data.bracketEnabled
-    ? parsed.data.bracketSeedingMode ?? "RANDOM"
-    : null;
+  const canApprove = await hasWorkspacePermission(session.userId, parsed.data.workspaceId, "APPROVE_EVENTS");
+  const approvalRequired = Boolean(workspace.approval_required) && !canApprove && role !== "OWNER";
+  const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0 ? parsed.data.maxParticipants : null;
+  const bracketFormat = parsed.data.bracketEnabled ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION" : null;
+  const seedingMode = parsed.data.bracketEnabled ? parsed.data.bracketSeedingMode ?? "RANDOM" : null;
   const gameName = parsed.data.subgameName || parsed.data.platformName || null;
 
   await withTransaction(async (connection) => {
@@ -117,61 +94,28 @@ export async function POST(request: NextRequest) {
          bracket_require_check_in, staff_approval_required, created_by, primary_host_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        eventId,
-        parsed.data.workspaceId,
-        parsed.data.name,
-        parsed.data.description ?? null,
-        gameName,
-        parsed.data.platformName ?? null,
-        parsed.data.subgameName ?? null,
-        parsed.data.gameUrl || null,
-        parsed.data.gameExternalId ?? null,
-        parsed.data.gameUniverseId ?? null,
-        parsed.data.gameThumbnailUrl || null,
-        parsed.data.requiredConnectionType ?? null,
-        parsed.data.visibility,
-        parsed.data.joinCodeRequired ? 1 : 0,
+        eventId, parsed.data.workspaceId, parsed.data.name, parsed.data.description ?? null, gameName,
+        parsed.data.platformName ?? null, parsed.data.subgameName ?? null, parsed.data.gameUrl || null,
+        parsed.data.gameExternalId ?? null, parsed.data.gameUniverseId ?? null, parsed.data.gameThumbnailUrl || null,
+        parsed.data.requiredConnectionType ?? null, parsed.data.visibility, parsed.data.joinCodeRequired ? 1 : 0,
         parsed.data.startsAt ? new Date(parsed.data.startsAt) : null,
         parsed.data.signupDeadline ? new Date(parsed.data.signupDeadline) : null,
         parsed.data.checkInOpensAt ? new Date(parsed.data.checkInOpensAt) : null,
         parsed.data.checkInDeadline ? new Date(parsed.data.checkInDeadline) : null,
-        maximum,
-        parsed.data.timezone,
-        parsed.data.bracketEnabled ? 1 : 0,
-        bracketFormat,
-        seedingMode,
-        parsed.data.bracketAutoGenerate ? 1 : 0,
-        parsed.data.bracketRequireCheckIn ? 1 : 0,
-        approvalRequired ? 1 : 0,
-        session.userId,
-        session.userId,
+        maximum, parsed.data.timezone, parsed.data.bracketEnabled ? 1 : 0, bracketFormat, seedingMode,
+        parsed.data.bracketAutoGenerate ? 1 : 0, parsed.data.bracketRequireCheckIn ? 1 : 0,
+        approvalRequired ? 1 : 0, session.userId, session.userId,
       ],
     );
-
     if (parsed.data.bracketEnabled && bracketFormat && seedingMode) {
-      await connection.execute(
-        `INSERT INTO brackets (id, event_id, format, status, seeding_mode)
-         VALUES (?, ?, ?, 'DRAFT', ?)`,
-        [randomUUID(), eventId, bracketFormat, seedingMode],
-      );
+      await connection.execute(`INSERT INTO brackets (id, event_id, format, status, seeding_mode) VALUES (?, ?, ?, 'DRAFT', ?)`, [randomUUID(), eventId, bracketFormat, seedingMode]);
     }
   });
 
   await writeAuditLog({
-    actorUserId: session.userId,
-    workspaceId: parsed.data.workspaceId,
-    eventId,
-    action: "event.created",
-    targetType: "event",
-    targetId: eventId,
-    details: {
-      initialStatus: "DRAFT",
-      approvalRequired,
-      visibility: parsed.data.visibility,
-      platformName: parsed.data.platformName,
-      bracketEnabled: parsed.data.bracketEnabled,
-    },
+    actorUserId: session.userId, workspaceId: parsed.data.workspaceId, eventId,
+    action: "event.created", targetType: "event", targetId: eventId,
+    details: { initialStatus: "DRAFT", approvalRequired, visibility: parsed.data.visibility, platformName: parsed.data.platformName, bracketEnabled: parsed.data.bracketEnabled },
   });
-
   return NextResponse.json({ eventId, status: "DRAFT", approvalRequired }, { status: 201 });
 }
