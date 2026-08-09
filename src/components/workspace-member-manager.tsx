@@ -126,14 +126,14 @@ export function WorkspaceMemberManager({ workspaceId, members, ownerClaims }: { 
   }
 
   async function removeClaim(discordId: string) {
-    if (!window.confirm(`Remove the pending Owner claim for Discord ID ${discordId}?`)) return;
+    if (!window.confirm(`Remove the Owner identity link for Discord ID ${discordId}?`)) return;
     setBusy(discordId); setMessage("");
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/members?discordId=${encodeURIComponent(discordId)}`, { method: "DELETE" });
       const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Owner claim could not be removed.");
+      if (!response.ok) throw new Error(body.error ?? "Owner identity link could not be removed.");
       router.refresh();
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Owner claim could not be removed."); }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Owner identity link could not be removed."); }
     finally { setBusy(null); }
   }
 
@@ -148,7 +148,19 @@ export function WorkspaceMemberManager({ workspaceId, members, ownerClaims }: { 
 
       <div className="access-editor-list">{members.map((member) => <MemberEditor key={member.userId} workspaceId={workspaceId} member={member} members={members} busy={busy} setBusy={setBusy} setMessage={setMessage} />)}</div>
 
-      {ownerClaims.length ? <div className="pending-owner-claims"><h3>Owner Discord IDs</h3><p className="muted">Owner claims survive before a person's first login. The last Owner cannot be removed until another Owner exists.</p>{ownerClaims.map((claim) => <article className="list-card" key={claim.discordId}><span className="list-icon">ID</span><div><strong>{claim.discordId}</strong><span>{claim.activeUserId ? "Connected to an active website user" : "Waiting for first website login"}</span><small>Added {new Date(claim.createdAt).toLocaleString()}</small></div><button className="button button-danger" type="button" disabled={busy === claim.discordId} onClick={() => removeClaim(claim.discordId)}>Remove claim</button></article>)}</div> : null}
+      {ownerClaims.length ? <div className="pending-owner-claims"><h3>Owner identity links</h3><p className="muted">Before first login, an Owner is shown by Discord ID. After they register, this automatically switches to their Game Night Tools identity while keeping the permanent Discord ownership link.</p>{ownerClaims.map((claim) => {
+        const linkedMember = claim.activeUserId ? members.find((member) => member.userId === claim.activeUserId) ?? null : null;
+        const linked = Boolean(linkedMember);
+        return <article className={`list-card owner-claim-card${linked ? " owner-claim-connected" : ""}`} key={claim.discordId}>
+          {linkedMember?.avatarUrl ? <img className="access-avatar" src={linkedMember.avatarUrl} alt="" /> : <span className="list-icon">{linkedMember ? linkedMember.displayName.slice(0, 2) : "ID"}</span>}
+          <div className="owner-claim-identity">
+            <strong>{linkedMember?.displayName ?? claim.discordId}</strong>
+            {linkedMember ? <span>{linkedMember.siteUsername ? `@${linkedMember.siteUsername} · ` : ""}Discord: @{members.find((member) => member.userId === claim.activeUserId)?.displayName ? linkedMember.displayName : linkedMember.discordId}</span> : <span>Waiting for first website login</span>}
+            <small>{linkedMember ? `Owner account connected · Discord ID ${claim.discordId}` : `Pending Owner Discord ID ${claim.discordId}`} · Added {new Date(claim.createdAt).toLocaleString()}</small>
+          </div>
+          <button className="button button-danger" type="button" disabled={busy === claim.discordId} onClick={() => removeClaim(claim.discordId)}>Remove link</button>
+        </article>;
+      })}</div> : null}
       {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
     </div>
   );
