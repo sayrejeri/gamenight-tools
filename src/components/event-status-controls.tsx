@@ -17,11 +17,25 @@ const buttonsByStatus: Record<string, Array<{ action: Action; label: string; dan
   CANCELLED: [{ action: "REOPEN_DRAFT", label: "Reopen as draft" }],
 };
 
-export function EventStatusControls({ eventId, status, canApprove }: { eventId: string; status: string; canApprove: boolean }) {
+export function EventStatusControls({
+  eventId,
+  status,
+  canApprove,
+  teamTournament = false,
+}: {
+  eventId: string;
+  status: string;
+  canApprove: boolean;
+  teamTournament?: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState<Action | null>(null);
   const [message, setMessage] = useState("");
-  const buttons = (buttonsByStatus[status] ?? []).filter((button) => button.action !== "APPROVE" || canApprove);
+  const buttons = (buttonsByStatus[status] ?? []).filter((button) => {
+    if (button.action === "APPROVE" && !canApprove) return false;
+    if (teamTournament && button.action === "OPEN_CHECKIN") return false;
+    return true;
+  });
 
   useEffect(() => {
     let active = true;
@@ -46,7 +60,7 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
       if (entered === null) return;
       reason = entered.trim();
       if (reason.length < 2) {
-        setMessage("Enter a short cancellation reason so participants know what happened.");
+        setMessage("Enter a short cancellation reason so entrants know what happened.");
         return;
       }
       if (!window.confirm("Cancel this event and notify connected announcement webhooks?")) return;
@@ -62,7 +76,8 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
       });
       const body = await response.json() as { error?: string; status?: string; bracketResult?: { generated?: boolean; participantCount?: number } };
       if (!response.ok) throw new Error(body.error ?? "Event status could not be changed.");
-      const bracketMessage = body.bracketResult?.generated ? ` A bracket was generated with ${body.bracketResult.participantCount} participants.` : "";
+      const entrantLabel = teamTournament ? "teams" : "participants";
+      const bracketMessage = body.bracketResult?.generated ? ` A competition was generated with ${body.bracketResult.participantCount} ${entrantLabel}.` : "";
       setMessage(`Event updated to ${body.status?.replaceAll("_", " ").toLowerCase()}.${bracketMessage}`);
       router.refresh();
     } catch (error) {
@@ -76,7 +91,9 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
     <div className="form-stack">
       <div className="button-row">
         <Link className="button button-secondary" href={`/dashboard/events/${eventId}/edit`}>Edit event</Link>
-        <Link className="button button-secondary" href={`/dashboard/events/${eventId}/participants`}>Manage participants</Link>
+        <Link className="button button-secondary" href={teamTournament ? `/dashboard/events/${eventId}/teams` : `/dashboard/events/${eventId}/participants`}>
+          {teamTournament ? "Manage tournament teams" : "Manage participants"}
+        </Link>
         {buttons.map((button) => (
           <button
             className={`button ${button.danger ? "button-danger" : button.action === "POSTPONE" || button.action === "REOPEN_DRAFT" ? "button-secondary" : ""}`}
@@ -89,6 +106,7 @@ export function EventStatusControls({ eventId, status, canApprove }: { eventId: 
           </button>
         ))}
       </div>
+      {teamTournament && ["SIGNUPS_OPEN", "SIGNUPS_CLOSED"].includes(status) ? <span className="field-help">Team tournaments skip individual check-in. Close team signups, generate/save the competition, then start the event.</span> : null}
       {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
     </div>
   );
