@@ -11,7 +11,8 @@ const teamSchema = z.object({ teamId: z.string().uuid() });
 
 type EventRow = RowDataPacket & {
   id: string; workspace_id: string; primary_host_id: string; status: string; visibility: string;
-  bracket_enabled: number; bracket_entry_mode: string; max_participants: number | null; user_in_guild: number;
+  bracket_enabled: number; bracket_entry_mode: string; max_participants: number | null;
+  join_code_required: number; user_in_guild: number;
 };
 type CohostRow = RowDataPacket & { permission_level: string };
 type TeamRoleRow = RowDataPacket & { role: string };
@@ -21,7 +22,7 @@ class TeamLimitReached extends Error {}
 async function loadEvent(eventId: string, userId: string): Promise<EventRow | null> {
   const rows = await query<EventRow[]>(
     `SELECT e.id, e.workspace_id, CAST(e.primary_host_id AS CHAR) AS primary_host_id, e.status, e.visibility,
-            e.bracket_enabled, e.bracket_entry_mode, e.max_participants,
+            e.bracket_enabled, e.bracket_entry_mode, e.max_participants, e.join_code_required,
             EXISTS(SELECT 1 FROM user_guilds ug INNER JOIN workspaces w ON w.id = e.workspace_id
                    WHERE ug.user_id = ? AND ug.guild_id = w.discord_guild_id) AS user_in_guild
      FROM events e WHERE e.id = ? LIMIT 1`,
@@ -59,11 +60,20 @@ async function userIsRegisteredRosterMember(userId: string, eventId: string): Pr
   return rows.some((row) => rosterContains(row.roster_json, userId));
 }
 
+async function userHasEventAccessRecord(userId: string, eventId: string): Promise<boolean> {
+  const rows = await query<(RowDataPacket & { user_id: string })[]>(
+    `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants WHERE event_id = ? AND user_id = ? LIMIT 1`,
+    [eventId, userId],
+  );
+  return Boolean(rows[0]);
+}
+
 async function canViewEvent(userId: string, event: EventRow, canManage: boolean): Promise<boolean> {
   if (canManage) return true;
   if (event.status === "DRAFT" || event.status === "AWAITING_APPROVAL" || event.visibility === "STAFF_ONLY") return false;
   if (event.visibility === "PUBLIC" || event.visibility === "UNLISTED") return true;
   if (event.visibility === "SERVER" && event.user_in_guild) return true;
+  if (await userHasEventAccessRecord(userId, event.id)) return true;
   return userIsRegisteredRosterMember(userId, event.id);
 }
 
@@ -149,16 +159,28 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
   const role = await userTeamRole(session.userId, parsed.data.teamId);
   if (!canManage && !["OWNER", "MANAGER", "CAPTAIN"].includes(role ?? "")) return NextResponse.json({ error: "Only the team owner, manager, captain, or event staff can register this team." }, { status: 403 });
   if (!canManage && event.status !== "SIGNUPS_OPEN") return NextResponse.json({ error: "Team signups are not open right now." }, { status: 409 });
-  if (!canManage && !(event.visibility === "PUBLIC" || event.visibility === "UNLISTED" || (event.visibility === "SERVER" && event.user_in_guild))) return NextResponse.json({ error: "This event does not currently allow direct team registration from your account." }, { status: 403 });
+
+  const hasCodeAccess = await userHasEventAccessRecord(session.userId, eventId);
+  if (!canManage && event.join_code_required && !hasCodeAccess) {
+    return NextResponse.json({ error: "Redeem the event join code before registering a team." }, { status: 403 });
+  }
+  if (!canManage && !(event.visibility === "PUBLIC" || event.visibility === "UNLISTED" || (event.visibility === "SERVER" && event.user_in_guild) || hasCodeAccess)) {
+    return NextResponse.json({ error: "This event does not currently allow direct team registration from your account." }, { status: 403 });
+  }
 
   const teams = await query<(RowDataPacket & { id: string; profile_status: string })[]>(`SELECT id, profile_status FROM teams WHERE id = ? LIMIT 1`, [parsed.data.teamId]);
   if (!teams[0] || teams[0].profile_status !== "APPROVED") return NextResponse.json({ error: "That team is not available for tournament registration." }, { status: 404 });
 
   try {
     await withTransaction(async (connection) => {
+      const [eventLocks] = await connection.query<(RowDataPacket & { max_participants: number | null })[]>(
+        `SELECT max_participants FROM events WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [eventId],
+      );
+      const lockedMaximum = eventLocks[0]?.max_participants ?? null;
       const [existingRows] = await connection.query<(RowDataPacket & { status: string })[]>(`SELECT status FROM event_team_entries WHERE event_id = ? AND team_id = ? LIMIT 1 FOR UPDATE`, [eventId, parsed.data.teamId]);
       const [countRows] = await connection.query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM event_team_entries WHERE event_id = ? AND status = 'REGISTERED'`, [eventId]);
-      if (existingRows[0]?.status !== "REGISTERED" && event.max_participants && Number(countRows[0]?.total ?? 0) >= event.max_participants) throw new TeamLimitReached("This team tournament is full.");
+      if (existingRows[0]?.status !== "REGISTERED" && lockedMaximum && Number(countRows[0]?.total ?? 0) >= lockedMaximum) throw new TeamLimitReached("This team tournament is full.");
       const roster = await snapshotRoster(connection, parsed.data.teamId);
       if (!roster.length) throw new Error("TEAM_ROSTER_EMPTY");
       const captain = roster.find((member) => member.role === "CAPTAIN") ?? roster.find((member) => member.role === "OWNER") ?? roster[0];
