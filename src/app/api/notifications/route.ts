@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { ResultSetHeader } from "mysql2";
 import { readSession } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 
@@ -25,11 +26,10 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   }
   if (!body.id) return NextResponse.json({ error: "Notification ID is required." }, { status: 400 });
-  const [result] = await getPool().execute(
+  const [result] = await getPool().execute<ResultSetHeader>(
     `UPDATE notifications SET dismissed_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND user_id = ? AND is_read = 1 AND dismissed_at IS NULL`,
     [body.id, session.userId],
   );
-  const affectedRows = "affectedRows" in result ? Number(result.affectedRows) : 0;
-  if (!affectedRows) return NextResponse.json({ error: "Read the notification before deleting it." }, { status: 409 });
+  if (result.affectedRows !== 1) return NextResponse.json({ error: "Read the notification before deleting it." }, { status: 409 });
   return NextResponse.json({ success: true });
 }
