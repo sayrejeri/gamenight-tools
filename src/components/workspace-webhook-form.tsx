@@ -12,6 +12,7 @@ const notificationOptions = [
   ["EVENT_PUBLISHED", "Event published"], ["SIGNUPS_CLOSED", "Signups closed"], ["CHECK_IN_OPEN", "Check-in opened"],
   ["EVENT_LIVE", "Event started"], ["EVENT_COMPLETED", "Event completed"], ["EVENT_CANCELLED", "Event cancelled"],
   ["BRACKET_PUBLISHED", "Bracket published"], ["SUGGESTION_UPDATE", "Suggestion update"],
+  ["COMMUNITY_ANNOUNCEMENT", "Community chat announcement"],
 ] as const;
 
 function WebhookEditor({ workspaceId, webhook, busy, setBusy, setMessage }: {
