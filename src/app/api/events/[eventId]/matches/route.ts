@@ -7,7 +7,7 @@ import { readSession } from "@/lib/auth";
 import { getPool, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
 import { isDraft, type BracketDraft } from "@/components/bracket/bracket-model";
-import { applyDraftWinner, clearDraftWinner } from "@/lib/bracket-results";
+import { applyDraftWinner, clearDraftWinner, getDraftMatchParticipants } from "@/lib/bracket-results";
 import { syncBracketRecords } from "@/lib/bracket-normalization";
 import { getTournamentAccess } from "@/lib/tournament-access";
 import { dispatchWorkspaceWebhooks } from "@/lib/workspace-webhook-dispatch";
@@ -90,6 +90,12 @@ function participantKeyForEntry(match: MatchRow, entryId: string): string | null
   return null;
 }
 
+function participantNameForEntry(match: MatchRow, entryId: string): string | null {
+  if (match.participant_a_entry_id === entryId) return match.a_name;
+  if (match.participant_b_entry_id === entryId) return match.b_name;
+  return null;
+}
+
 function validateWinner(match: MatchRow, winnerEntryId: string | undefined): string {
   if (!winnerEntryId || ![match.participant_a_entry_id, match.participant_b_entry_id].includes(winnerEntryId)) {
     throw new MatchConflict("Choose a player who is actually in this match.");
@@ -124,6 +130,34 @@ async function loadLockedMatch(connection: PoolConnection, bracketId: string, ma
   return rows[0];
 }
 
+async function resolveWinnerParticipantKey(input: {
+  connection: PoolConnection;
+  draft: BracketDraft;
+  match: MatchRow;
+  sourceId: string;
+  winnerEntryId: string;
+}): Promise<string> {
+  const stored = participantKeyForEntry(input.match, input.winnerEntryId);
+  if (stored) return stored;
+
+  const displayName = participantNameForEntry(input.match, input.winnerEntryId)?.trim();
+  if (!displayName) throw new MatchConflict("This legacy bracket entry is missing its saved participant identity. Re-save the bracket before continuing.");
+  const normalized = displayName.toLocaleLowerCase();
+  const candidates = getDraftMatchParticipants(input.draft, input.sourceId)
+    .filter((participant) => participant.name.trim().toLocaleLowerCase() === normalized);
+  if (candidates.length !== 1) {
+    throw new MatchConflict("This legacy manual bracket cannot map that player safely because the saved names are ambiguous. Re-save the bracket once before operating this match.");
+  }
+
+  const participantKey = candidates[0].id;
+  await input.connection.execute(
+    `UPDATE bracket_entries SET participant_key = ?, updated_at = CURRENT_TIMESTAMP(3)
+     WHERE id = ? AND participant_key IS NULL`,
+    [participantKey, input.winnerEntryId],
+  );
+  return participantKey;
+}
+
 async function completeMatch(input: {
   connection: PoolConnection;
   bracket: BracketRow;
@@ -141,8 +175,8 @@ async function completeMatch(input: {
   try { draft = JSON.parse(input.bracket.settings_json); } catch { draft = null; }
   if (!isDraft(draft)) throw new MatchConflict("The saved bracket state is invalid.");
   const sourceId = sourceMatchId(input.match);
-  const winnerKey = participantKeyForEntry(input.match, input.winnerEntryId);
-  if (!sourceId || !winnerKey) throw new MatchConflict("This match is not linked to a valid bracket slot.");
+  if (!sourceId) throw new MatchConflict("This match is not linked to a valid bracket slot.");
+  const winnerKey = await resolveWinnerParticipantKey({ connection: input.connection, draft, match: input.match, sourceId, winnerEntryId: input.winnerEntryId });
 
   const nextDraft = applyDraftWinner(draft, sourceId, winnerKey);
   await input.connection.execute(
@@ -300,7 +334,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         );
         const report = reports[0];
         if (!report) throw new MatchConflict("There is no result waiting for confirmation.");
-        if (!access.manager && report.submitted_by === session.userId) throw new MatchConflict("The player who submitted the result cannot confirm their own report.");
+        if (report.submitted_by === session.userId) throw new MatchConflict("The player who submitted the result cannot confirm their own report. Use the staff override path with a reason if a correction is required.");
         await connection.execute(
           `UPDATE match_reports SET status = 'CONFIRMED', confirmed_by = ?, confirmed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
           [session.userId, report.id],
@@ -330,7 +364,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         );
         const report = reports[0];
         if (!report) throw new MatchConflict("There is no pending result to dispute.");
-        if (report.submitted_by === session.userId) throw new MatchConflict("You cannot dispute your own result report. Edit through staff if a correction is needed.");
+        if (report.submitted_by === session.userId) throw new MatchConflict("You cannot dispute your own result report. Use tournament staff if a correction is needed.");
         await connection.execute(`UPDATE match_reports SET status = 'DISPUTED', updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [report.id]);
         await connection.execute(
           `INSERT INTO match_disputes (id, match_id, report_id, opened_by, reason, proof_url)
@@ -403,7 +437,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
       await dispatchWorkspaceWebhooks({
         workspaceId: access.event.workspace_id,
         eventId,
-        notificationType: "BRACKET_PUBLISHED",
+        notificationType: "MATCH_UPDATE",
         title: `${access.event.name} · ${outcome.label}`,
         description: outcome.message,
         url: appUrl ? `${appUrl}/dashboard/events/${eventId}/matches` : null,
