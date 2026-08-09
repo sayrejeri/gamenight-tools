@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { syncBracketRecords } from "@/lib/bracket-normalization";
+import type { BracketDraft } from "@/components/bracket/bracket-model";
 
 type ParticipantRow = RowDataPacket & {
   user_id: string;
   display_name: string;
 };
+type BracketIdRow = RowDataPacket & { id: string };
 
 type Pair = [
   { id: string; name: string } | null,
@@ -22,21 +25,27 @@ function shuffle<T>(values: T[]): T[] {
 
 function buildFirstRound(participants: Array<{ id: string; name: string }>): Pair[] {
   const size = 2 ** Math.ceil(Math.log2(Math.max(2, participants.length)));
+  const pairCount = size / 2;
   const byeCount = size - participants.length;
+  const playedMatchCount = pairCount - byeCount;
+  const playedPositions = new Set<number>();
+  for (let index = 0; index < playedMatchCount; index += 1) {
+    playedPositions.add(Math.floor(((index + 0.5) * pairCount) / playedMatchCount));
+  }
+
   const pairs: Pair[] = [];
   let cursor = 0;
-
-  for (let index = 0; index < byeCount; index += 1) {
-    pairs.push([participants[cursor] ?? null, null]);
+  for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+    const a = participants[cursor] ?? null;
     cursor += 1;
+    if (playedPositions.has(pairIndex)) {
+      const b = participants[cursor] ?? null;
+      cursor += 1;
+      pairs.push([a, b]);
+    } else {
+      pairs.push([a, null]);
+    }
   }
-
-  while (cursor < participants.length) {
-    pairs.push([participants[cursor] ?? null, participants[cursor + 1] ?? null]);
-    cursor += 2;
-  }
-
-  while (pairs.length < size / 2) pairs.push([null, null]);
   return pairs;
 }
 
@@ -59,7 +68,7 @@ export async function generateEventBracket(
   if (seedingMode === "MANUAL") return { generated: false, participantCount: 0 };
 
   const [rows] = await connection.query<ParticipantRow[]>(
-    `SELECT ep.user_id,
+    `SELECT CAST(ep.user_id AS CHAR) AS user_id,
             COALESCE(NULLIF(ep.game_identity_value, ''), u.global_name, u.username) AS display_name
      FROM event_participants ep
      INNER JOIN users u ON u.id = ep.user_id
@@ -82,7 +91,7 @@ export async function generateEventBracket(
     name: row.display_name,
   })));
 
-  const state = format === "THREE_PLAYER"
+  const state: BracketDraft = format === "THREE_PLAYER"
     ? {
         version: 1,
         title: eventName,
@@ -113,9 +122,13 @@ export async function generateEventBracket(
        seeding_mode = VALUES(seeding_mode),
        settings_json = VALUES(settings_json),
        generated_at = CURRENT_TIMESTAMP(3),
+       completed_at = NULL,
        updated_at = CURRENT_TIMESTAMP(3)`,
     [randomUUID(), eventId, format, seedingMode, JSON.stringify(state)],
   );
+
+  const [bracketRows] = await connection.query<BracketIdRow[]>(`SELECT id FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]);
+  if (bracketRows[0]) await syncBracketRecords(connection, bracketRows[0].id, state);
 
   return { generated: true, participantCount: participants.length };
 }
