@@ -19,7 +19,8 @@ export type WorkspaceWebhookNotification =
   | "EVENT_COMPLETED"
   | "EVENT_CANCELLED"
   | "BRACKET_PUBLISHED"
-  | "SUGGESTION_UPDATE";
+  | "SUGGESTION_UPDATE"
+  | "COMMUNITY_ANNOUNCEMENT";
 
 export async function dispatchWorkspaceWebhooks(input: {
   workspaceId: string;

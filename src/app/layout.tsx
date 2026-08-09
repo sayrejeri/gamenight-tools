@@ -12,16 +12,17 @@ import "./mobile-navigation.css";
 import "./request-form.css";
 import "./v037.css";
 import "./v038.css";
+import "./v040.css";
 
 export const metadata: Metadata = {
   title: { default: "Game Night Tools", template: "%s · Game Night Tools" },
-  description: "Discord-powered events, teams, community profiles, suggestions, tools, and server workspaces.",
+  description: "Discord-powered events, teams, community profiles, communication, suggestions, tools, and server workspaces.",
   applicationName: "Game Night Tools",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", shortcut: "/icon.svg", apple: "/icon.svg" },
   openGraph: {
     title: "Game Night Tools",
-    description: "Run game nights, build teams, manage communities, and organize events from one Discord-connected platform.",
+    description: "Run game nights, communicate with communities, build teams, manage events, and organize tournaments from one Discord-connected platform.",
     type: "website",
   },
 };

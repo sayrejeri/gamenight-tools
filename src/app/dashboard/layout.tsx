@@ -13,7 +13,8 @@ type NotificationCountRow = RowDataPacket & { unread: number };
 
 const primaryLinks = [
   ["Home", "/dashboard"], ["Events", "/dashboard/events"], ["Servers", "/dashboard/servers"],
-  ["Teams", "/dashboard/teams"], ["Suggestions", "/dashboard/suggestions"], ["Tools", "/dashboard/tools"], ["Search", "/dashboard/search"],
+  ["Teams", "/dashboard/teams"], ["Community", "/dashboard/community"], ["Suggestions", "/dashboard/suggestions"],
+  ["Tools", "/dashboard/tools"], ["Search", "/dashboard/search"],
 ] as const;
 
 export default async function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {

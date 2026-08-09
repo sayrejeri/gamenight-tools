@@ -25,7 +25,7 @@ export async function POST(_request: Request, context: { params: Promise<{ works
     const status = await sendDiscordWebhook(decryptWebhookUrl(webhook.encrypted_url), {
       username: webhook.username_override ?? "Game Night Tools",
       avatarUrl: webhook.avatar_url,
-      embed: { title: "Webhook connected", description: `${webhook.label} is ready to post updates for ${webhook.workspace_name}.`, fields: [{ name: "Source", value: "Game Night Tools v0.3.8", inline: true }, { name: "Status", value: "Test successful", inline: true }] },
+      embed: { title: "Webhook connected", description: `${webhook.label} is ready to post updates for ${webhook.workspace_name}.`, fields: [{ name: "Source", value: "Game Night Tools v0.4.0", inline: true }, { name: "Status", value: "Test successful", inline: true }] },
     });
     await getPool().execute(`UPDATE workspace_webhooks SET failure_count = 0, last_success_at = CURRENT_TIMESTAMP(3), last_error_message = NULL WHERE id = ?`, [webhookId]);
     await getPool().execute(`INSERT INTO webhook_delivery_logs (id, webhook_id, notification_type, status, response_status) VALUES (?, ?, 'TEST', 'SUCCESS', ?)`, [randomUUID(), webhookId, status]);
