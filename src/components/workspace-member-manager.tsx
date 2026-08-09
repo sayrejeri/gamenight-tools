@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { InfoTip } from "@/components/info-tip";
+import { UserLookupField } from "@/components/user-lookup-field";
 import {
   WORKSPACE_PERMISSIONS,
   WORKSPACE_PERMISSION_INFO,
@@ -140,7 +141,7 @@ export function WorkspaceMemberManager({ workspaceId, members, ownerClaims }: { 
     <div className="section-stack">
       <form className="card form-stack" action={add}>
         <div className="section-header"><div><h3>Add server access</h3><p>Roles are presets. After adding a user, open their access card to customize individual capabilities.</p></div></div>
-        <div className="two-column"><div className="form-stack compact"><label>User or Discord ID <InfoTip text="Existing users can be found by site username or Discord username. A numeric Discord ID can be saved before first login only for an Owner claim." /></label><input name="identifier" placeholder="Site username, Discord username, or numeric Discord ID" required /></div><div className="form-stack compact"><label>Base role</label><select name="role" defaultValue="STAFF"><option value="VIEWER">Viewer</option><option value="REFEREE">Referee</option><option value="HOST">Host</option><option value="STAFF">Staff</option><option value="ADMIN">Admin</option><option value="OWNER">Owner</option></select></div></div>
+        <div className="two-column"><div><UserLookupField name="identifier" label="User or Discord ID" /><small className="muted">A numeric Discord ID can be saved before first login only for an Owner claim.</small></div><div className="form-stack compact"><label>Base role</label><select name="role" defaultValue="STAFF"><option value="VIEWER">Viewer</option><option value="REFEREE">Referee</option><option value="HOST">Host</option><option value="STAFF">Staff</option><option value="ADMIN">Admin</option><option value="OWNER">Owner</option></select></div></div>
         <div className="three-column"><div className="form-stack compact"><label>Visible label</label><input name="displayLabel" placeholder="Optional custom title" /></div><div className="form-stack compact"><label>Temporary access expires</label><input name="expiresAt" type="datetime-local" /></div><div className="form-stack compact"><label>Private note</label><input name="notes" placeholder="Optional" /></div></div>
         <button className="button" disabled={busy === "add"}>{busy === "add" ? "Adding…" : "Add access"}</button>
       </form>
