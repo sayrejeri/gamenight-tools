@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { InfoTip } from "@/components/info-tip";
+import { UserLookupField } from "@/components/user-lookup-field";
 import {
   PLATFORM_PERMISSIONS,
   PLATFORM_PERMISSION_INFO,
@@ -161,7 +162,7 @@ export function PlatformStaffForm({ staff }: { staff: StaffMember[] }) {
     <div className="section-stack">
       <form className="card form-stack" action={assign}>
         <div className="section-header"><div><h3>Add platform staff</h3><p>Assign a safe base role first. High-level roles and custom permissions are protected server-side.</p></div></div>
-        <div className="two-column"><div className="form-stack compact"><label>User</label><input name="identifier" placeholder="Site username, Discord username, or Discord ID" required /></div><div className="form-stack compact"><label>Base role</label><select name="role" defaultValue="SUPPORT"><option value="SUPPORT">Support</option><option value="MODERATOR">Moderator</option><option value="REVIEWER">Profile reviewer</option><option value="ADMIN">Admin</option><option value="OWNER">Owner</option></select></div></div>
+        <div className="two-column"><UserLookupField name="identifier" /><div className="form-stack compact"><label>Base role</label><select name="role" defaultValue="SUPPORT"><option value="SUPPORT">Support</option><option value="MODERATOR">Moderator</option><option value="REVIEWER">Profile reviewer</option><option value="ADMIN">Admin</option><option value="OWNER">Owner</option></select></div></div>
         <div className="two-column"><div className="form-stack compact"><label>Visible label</label><input name="displayLabel" placeholder="Optional custom title" /></div><div className="form-stack compact"><label>Temporary access expires</label><input name="expiresAt" type="datetime-local" /></div></div>
         <button className="button" disabled={busy === "assign"}>{busy === "assign" ? "Adding…" : "Add staff access"}</button>
       </form>
