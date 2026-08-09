@@ -136,7 +136,6 @@ export function buildFirstRound(participants: Participant[]): Pair[] {
   for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
     const a = participants[cursor] ?? null;
     cursor += 1;
-
     if (playedMatchPositions.has(pairIndex)) {
       const b = participants[cursor] ?? null;
       cursor += 1;
@@ -145,7 +144,6 @@ export function buildFirstRound(participants: Participant[]): Pair[] {
       pairs.push([a, null]);
     }
   }
-
   return pairs;
 }
 
@@ -158,7 +156,6 @@ export function getMatchSlotLabel(match: DerivedMatch, slot: "a" | "b"): string 
 
 export function deriveSingleElimination(firstRound: Pair[], selectedWinners: WinnerMap): DerivedMatch[][] {
   if (!firstRound.length) return [];
-
   const bracketSize = firstRound.length * 2;
   const roundCount = Math.log2(bracketSize);
   const rounds: DerivedMatch[][] = [];
@@ -166,7 +163,6 @@ export function deriveSingleElimination(firstRound: Pair[], selectedWinners: Win
   for (let round = 0; round < roundCount; round += 1) {
     const matchCount = bracketSize / 2 ** (round + 1);
     const matches: DerivedMatch[] = [];
-
     for (let index = 0; index < matchCount; index += 1) {
       const id = `r${round}m${index}`;
       const sourceA = round > 0 ? rounds[round - 1][index * 2] : null;
@@ -177,20 +173,16 @@ export function deriveSingleElimination(firstRound: Pair[], selectedWinners: Win
       const bReady = round === 0 || Boolean(sourceB?.winner);
       const selected = selectedWinners[id];
       let winner: Participant | null = null;
-
       if (aReady && bReady) {
         if (a && !b) winner = a;
         if (!a && b) winner = b;
         if (a && b && selected === a.id) winner = a;
         if (a && b && selected === b.id) winner = b;
       }
-
       matches.push({ id, round, index, a, b, aReady, bReady, winner });
     }
-
     rounds.push(matches);
   }
-
   return rounds;
 }
 
@@ -215,50 +207,15 @@ export function resolveThreePlayerAdvancement(participants: Participant[], winne
       reason = `${m1Winner.name} won the final listed match, so ${m1Loser.name} advances because they defeated ${playerC.name} and no rematch is played.`;
     }
   }
-
   return { playerA, playerB, playerC, m1Winner, m1Loser, m2Winner, m3Winner, champion, reason };
 }
 
 function participantRef(participant: Participant | null): MatchSlotRef {
   return participant ? { type: "participant", participantId: participant.id } : { type: "none" };
 }
-
-function winnerRef(matchId: string): MatchSlotRef {
-  return { type: "winner", matchId };
-}
-
-function loserRef(matchId: string): MatchSlotRef {
-  return { type: "loser", matchId };
-}
-
-function groupRankRef(group: string, rank: number): MatchSlotRef {
-  return { type: "group_rank", group, rank };
-}
-
-function roundRobinPairs(participantIds: string[]): Array<Array<[string, string]>> {
-  const values: Array<string | null> = [...participantIds];
-  if (values.length % 2 === 1) values.push(null);
-  if (values.length < 2) return [];
-  const rounds: Array<Array<[string, string]>> = [];
-  const fixed = values[0];
-  let rotating = values.slice(1);
-
-  for (let round = 0; round < values.length - 1; round += 1) {
-    const lineup: Array<string | null> = [fixed, ...rotating];
-    const pairs: Array<[string, string]> = [];
-    for (let index = 0; index < lineup.length / 2; index += 1) {
-      const a = lineup[index];
-      const b = lineup[lineup.length - 1 - index];
-      if (a && b) pairs.push([a, b]);
-    }
-    rounds.push(pairs);
-    rotating = [rotating.at(-1) ?? null, ...rotating.slice(0, -1)].filter((value): value is string => Boolean(value));
-    if (values.includes(null) && rotating.length < values.length - 1) rotating.push("");
-    rotating = rotating.map((value) => value || null).filter((value, index) => index < values.length - 1) as string[];
-  }
-
-  return rounds;
-}
+function winnerRef(matchId: string): MatchSlotRef { return { type: "winner", matchId }; }
+function loserRef(matchId: string): MatchSlotRef { return { type: "loser", matchId }; }
+function groupRankRef(group: string, rank: number): MatchSlotRef { return { type: "group_rank", group, rank }; }
 
 function robustRoundRobinPairs(participantIds: string[]): Array<Array<[string, string]>> {
   const slots: Array<string | null> = [...participantIds];
@@ -346,12 +303,8 @@ function buildEliminationFromRefs(
 
 export function buildDoubleEliminationCompetition(participants: Participant[]): CompetitionMatchSpec[] {
   const firstRound = buildFirstRound(participants);
-  const winners = buildEliminationFromRefs(
-    firstRound.map(([a, b]) => [participantRef(a), participantRef(b)]),
-    "wb",
-    "winners",
-    "Winners",
-  );
+  const winnersFirstRefs: Array<[MatchSlotRef, MatchSlotRef]> = firstRound.map(([a, b]) => [participantRef(a), participantRef(b)]);
+  const winners = buildEliminationFromRefs(winnersFirstRefs, "wb", "winners", "Winners");
   const winnersByRound = new Map<number, CompetitionMatchSpec[]>();
   for (const match of winners) {
     const list = winnersByRound.get(match.round) ?? [];
@@ -452,20 +405,44 @@ function qualifierRefs(groups: Record<string, string[]>, advancersPerGroup: numb
   const groupNames = Object.keys(groups).sort();
   const refs: MatchSlotRef[] = [];
   for (let rank = 1; rank <= advancersPerGroup; rank += 1) {
-    const order = rank % 2 === 1 ? groupNames : [...groupNames].reverse();
-    for (const group of order) refs.push(groupRankRef(group, rank));
+    for (const group of groupNames) refs.push(groupRankRef(group, rank));
   }
   return refs;
 }
 
-function pairRefsForBracket(refs: MatchSlotRef[]): Array<[MatchSlotRef, MatchSlotRef]> {
+function groupOfRef(ref: MatchSlotRef): string | null {
+  return ref.type === "group_rank" ? ref.group : null;
+}
+
+function pairQualifierRefsForBracket(refs: MatchSlotRef[]): Array<[MatchSlotRef, MatchSlotRef]> {
   const size = nextPowerOfTwo(refs.length);
-  const padded: MatchSlotRef[] = [...refs, ...Array.from({ length: size - refs.length }, () => ({ type: "none" as const }))];
-  const pairs: Array<[MatchSlotRef, MatchSlotRef]> = [];
-  for (let index = 0; index < padded.length / 2; index += 1) {
-    pairs.push([padded[index], padded[padded.length - 1 - index]]);
+  const pairCount = size / 2;
+  const byeCount = size - refs.length;
+  const byes = refs.slice(0, byeCount);
+  const remaining = refs.slice(byeCount);
+  const playedPairs: Array<[MatchSlotRef, MatchSlotRef]> = [];
+
+  while (remaining.length >= 2) {
+    const a = remaining.shift() as MatchSlotRef;
+    const aGroup = groupOfRef(a);
+    let opponentIndex = -1;
+    for (let index = remaining.length - 1; index >= 0; index -= 1) {
+      const bGroup = groupOfRef(remaining[index]);
+      if (!aGroup || !bGroup || aGroup !== bGroup) {
+        opponentIndex = index;
+        break;
+      }
+    }
+    if (opponentIndex < 0) opponentIndex = remaining.length - 1;
+    const [b] = remaining.splice(opponentIndex, 1);
+    playedPairs.push([a, b]);
   }
-  return pairs;
+
+  if (remaining.length === 1) byes.push(remaining.shift() as MatchSlotRef);
+  const byePairs: Array<[MatchSlotRef, MatchSlotRef]> = byes.map((ref) => [ref, { type: "none" }]);
+  const pairs = [...byePairs, ...playedPairs];
+  while (pairs.length < pairCount) pairs.push([{ type: "none" }, { type: "none" }]);
+  return pairs.slice(0, pairCount);
 }
 
 export function buildGroupsPlayoffCompetition(
@@ -483,7 +460,7 @@ export function buildGroupsPlayoffCompetition(
     group,
   ));
   const refs = qualifierRefs(groups, advancers);
-  const playoffMatches = buildEliminationFromRefs(pairRefsForBracket(refs), "po", "playoff", "Playoff");
+  const playoffMatches = buildEliminationFromRefs(pairQualifierRefsForBracket(refs), "po", "playoff", "Playoff");
   return { groups, matches: [...groupMatches, ...playoffMatches], advancers };
 }
 
@@ -491,16 +468,16 @@ function participantById(draft: BracketDraft): Map<string, Participant> {
   return new Map(draft.participants.map((participant) => [participant.id, participant]));
 }
 
-function directHeadToHeadWinner(draft: BracketDraft, aId: string, bId: string, group?: string): string | null {
-  const specs = draft.competitionMatches ?? [];
-  for (const spec of specs) {
-    if (group && spec.group !== group) continue;
-    if (!["group", "round_robin"].includes(spec.stage)) continue;
+function roundRobinResultRows(draft: BracketDraft, group?: string): Array<{ aId: string; bId: string; winnerId: string }> {
+  const rows: Array<{ aId: string; bId: string; winnerId: string }> = [];
+  for (const spec of draft.competitionMatches ?? []) {
+    if (group ? spec.stage !== "group" || spec.group !== group : spec.stage !== "round_robin") continue;
     if (spec.a.type !== "participant" || spec.b.type !== "participant") continue;
-    const pair = [spec.a.participantId, spec.b.participantId];
-    if (pair.includes(aId) && pair.includes(bId)) return draft.winners[spec.id] ?? null;
+    const winnerId = draft.winners[spec.id];
+    if (!winnerId) continue;
+    rows.push({ aId: spec.a.participantId, bId: spec.b.participantId, winnerId });
   }
-  return null;
+  return rows;
 }
 
 export function deriveCompetitionStandings(draft: BracketDraft, group?: string): { rows: StandingRow[]; complete: boolean } {
@@ -512,37 +489,49 @@ export function deriveCompetitionStandings(draft: BracketDraft, group?: string):
     const participant = byId.get(id);
     if (participant) rows.set(id, { participant, wins: 0, losses: 0, played: 0, seed: draft.participants.findIndex((item) => item.id === id) + 1 });
   });
-  const matches = (draft.competitionMatches ?? []).filter((match) => {
-    if (group) return match.stage === "group" && match.group === group;
-    return match.stage === "round_robin";
-  });
+
+  const matches = (draft.competitionMatches ?? []).filter((match) => group ? match.stage === "group" && match.group === group : match.stage === "round_robin");
   let complete = matches.length > 0;
-  for (const match of matches) {
-    if (match.a.type !== "participant" || match.b.type !== "participant") continue;
-    const aId = match.a.participantId;
-    const bId = match.b.participantId;
-    if (!allowed.has(aId) || !allowed.has(bId)) continue;
-    const winnerId = draft.winners[match.id];
-    if (!winnerId) {
-      complete = false;
-      continue;
-    }
-    const loserId = winnerId === aId ? bId : aId;
-    const winner = rows.get(winnerId);
+  const results = roundRobinResultRows(draft, group);
+  const resultByPair = new Map<string, string>();
+  for (const result of results) {
+    if (!allowed.has(result.aId) || !allowed.has(result.bId)) continue;
+    const loserId = result.winnerId === result.aId ? result.bId : result.aId;
+    const winner = rows.get(result.winnerId);
     const loser = rows.get(loserId);
     if (winner) { winner.wins += 1; winner.played += 1; }
     if (loser) { loser.losses += 1; loser.played += 1; }
+    resultByPair.set([result.aId, result.bId].sort().join(":"), result.winnerId);
   }
+  if (results.length !== matches.length) complete = false;
+
   const tieBreakMode = draft.tieBreakMode ?? "HEAD_TO_HEAD_THEN_SEED";
-  const ordered = [...rows.values()].sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    if (tieBreakMode === "HEAD_TO_HEAD_THEN_SEED") {
-      const h2h = directHeadToHeadWinner(draft, a.participant.id, b.participant.id, group);
-      if (h2h === a.participant.id) return -1;
-      if (h2h === b.participant.id) return 1;
+  const winGroups = new Map<number, StandingRow[]>();
+  for (const row of rows.values()) {
+    const list = winGroups.get(row.wins) ?? [];
+    list.push(row);
+    winGroups.set(row.wins, list);
+  }
+
+  const ordered: StandingRow[] = [];
+  for (const wins of [...winGroups.keys()].sort((a, b) => b - a)) {
+    const tied = winGroups.get(wins) ?? [];
+    if (tieBreakMode === "SEED" || tied.length <= 1) {
+      tied.sort((a, b) => a.seed - b.seed);
+      ordered.push(...tied);
+      continue;
     }
-    return a.seed - b.seed;
-  });
+    const tiedIds = new Set(tied.map((row) => row.participant.id));
+    const headToHeadWins = new Map<string, number>(tied.map((row) => [row.participant.id, 0]));
+    for (const result of results) {
+      if (tiedIds.has(result.aId) && tiedIds.has(result.bId)) {
+        headToHeadWins.set(result.winnerId, (headToHeadWins.get(result.winnerId) ?? 0) + 1);
+      }
+    }
+    tied.sort((a, b) => (headToHeadWins.get(b.participant.id) ?? 0) - (headToHeadWins.get(a.participant.id) ?? 0) || a.seed - b.seed);
+    ordered.push(...tied);
+  }
+
   return { rows: ordered, complete };
 }
 
@@ -564,7 +553,11 @@ export function deriveExpandedCompetitionMatches(draft: BracketDraft): ResolvedC
     if (ref.type === "group_rank") return resolveGroupRank(draft, ref.group, ref.rank);
     const source = resolveMatch(ref.matchId);
     if (!source) return { participant: null, ready: false };
-    if (!source.winner) return { participant: null, ready: false };
+    if (!source.active) return { participant: null, ready: true };
+    if (!source.winner) {
+      const sourceResolvedEmpty = source.aReady && source.bReady && !source.a && !source.b;
+      return { participant: null, ready: sourceResolvedEmpty };
+    }
     if (ref.type === "winner") return { participant: source.winner, ready: true };
     if (!source.a || !source.b) return { participant: null, ready: true };
     return { participant: source.winner.id === source.a.id ? source.b : source.a, ready: true };
