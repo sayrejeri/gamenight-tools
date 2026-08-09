@@ -40,7 +40,6 @@ export async function getTournamentAccess(userId: string, eventId: string): Prom
   const cohostLevel = cohosts[0]?.permission_level ?? "";
   const manager = event.primary_host_id === userId
     || workspaceAccess.permissions.includes("MANAGE_BRACKETS")
-    || workspaceAccess.permissions.includes("MANAGE_PARTICIPANTS")
     || ["FULL", "BRACKET", "SCOREKEEPER"].includes(cohostLevel);
 
   return { event, manager, cohostLevel };
