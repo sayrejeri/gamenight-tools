@@ -36,8 +36,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ m
   const access = await getMessageAccess(session.userId, messageId);
   if (!access) return NextResponse.json({ error: "Message not found." }, { status: 404 });
   if (access.message.deleted_at) return NextResponse.json({ error: "Deleted messages cannot be edited." }, { status: 409 });
-  if (access.message.author_user_id !== session.userId && !access.access.canManageMessages) {
-    return NextResponse.json({ error: "You cannot edit this message." }, { status: 403 });
+  if (access.message.author_user_id !== session.userId) {
+    return NextResponse.json({ error: "Only the message author can edit a message. Moderators can remove it instead." }, { status: 403 });
   }
 
   const parsed = editSchema.safeParse(await request.json().catch(() => null));
