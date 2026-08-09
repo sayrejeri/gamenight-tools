@@ -99,18 +99,40 @@
 }
 
 .permission-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-height: 88px;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
 }
 
+.permission-option > input[type="checkbox"] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+  border-radius: 4px;
+  accent-color: var(--accent);
+  box-shadow: none;
+}
+
+.permission-option > input[type="checkbox"]:focus {
+  box-shadow: 0 0 0 3px rgba(124, 92, 255, .15);
+}
+
 .permission-option > span {
   display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.permission-option strong {
+  line-height: 1.35;
 }
 
 .permission-option small {
@@ -121,6 +143,45 @@
 .permission-option.high-risk {
   border-color: rgba(235, 179, 76, .48);
   background: rgba(235, 179, 76, .06);
+}
+
+.pending-owner-claims {
+  display: grid;
+  gap: 10px;
+}
+
+.pending-owner-claims > h3,
+.pending-owner-claims > p {
+  margin-bottom: 0;
+}
+
+.owner-claim-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.owner-claim-connected {
+  border-color: rgba(99, 211, 165, .28);
+  background: rgba(99, 211, 165, .035);
+}
+
+.owner-claim-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.owner-claim-identity strong,
+.owner-claim-identity span,
+.owner-claim-identity small {
+  overflow-wrap: anywhere;
+}
+
+.owner-claim-identity span,
+.owner-claim-identity small {
+  color: var(--muted);
 }
 
 .access-summary-card {
@@ -267,10 +328,13 @@
 @media (max-width: 760px) {
   .permission-grid,
   .audit-filter-grid { grid-template-columns: 1fr; }
+  .permission-option { min-height: 0; }
   .notification-toolbar { align-items: stretch; flex-direction: column; }
   .notification-toolbar select { width: 100%; }
   .notification-card { grid-template-columns: minmax(0, 1fr) auto; }
   .access-editor-card > summary { grid-template-columns: auto minmax(0, 1fr); }
   .access-editor-card > summary > .badge { grid-column: 2; justify-self: start; }
+  .owner-claim-card { grid-template-columns: auto minmax(0, 1fr); }
+  .owner-claim-card > .button { grid-column: 2; justify-self: start; }
   .info-tip-popover { left: 0; transform: none; }
 }
