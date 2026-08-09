@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
-import { query, withTransaction } from "@/lib/db";
+import { getPool, query, withTransaction } from "@/lib/db";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 import { generateEventBracket } from "@/lib/bracket-generation";
@@ -10,6 +11,7 @@ import { dispatchWorkspaceWebhooks, type WorkspaceWebhookNotification } from "@/
 
 const actionSchema = z.object({
   action: z.enum(["PUBLISH", "SUBMIT_APPROVAL", "APPROVE", "CLOSE_SIGNUPS", "OPEN_CHECKIN", "START", "COMPLETE", "POSTPONE", "CANCEL", "REOPEN_DRAFT"]),
+  reason: z.string().trim().max(1000).optional().default(""),
 });
 
 type EventRow = RowDataPacket & {
@@ -60,8 +62,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   if (!canManage) return NextResponse.json({ error: "You cannot manage this event." }, { status: 403 });
 
   const action = parsed.data.action;
+  const reason = parsed.data.reason.trim();
   if (!allowedFrom[action]?.includes(event.status)) return NextResponse.json({ error: `That action is not available while the event is ${event.status.toLowerCase()}.` }, { status: 409 });
   if (action === "APPROVE" && !canApprove) return NextResponse.json({ error: "Event-approval permission is required." }, { status: 403 });
+  if (action === "CANCEL" && reason.length < 2) return NextResponse.json({ error: "Enter a cancellation reason for participants." }, { status: 400 });
 
   let nextStatus: string;
   if (action === "PUBLISH") nextStatus = event.staff_approval_required && !canApprove ? "AWAITING_APPROVAL" : "SIGNUPS_OPEN";
@@ -83,8 +87,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
              approved_at = IF(? = 'APPROVE', CURRENT_TIMESTAMP(3), approved_at),
              published_at = IF(? = 'SIGNUPS_OPEN' AND published_at IS NULL, CURRENT_TIMESTAMP(3), published_at),
              signups_closed_at = IF(? IN ('SIGNUPS_CLOSED', 'CHECK_IN_OPEN', 'LIVE'), CURRENT_TIMESTAMP(3), signups_closed_at),
+             cancellation_reason = CASE WHEN ? = 'CANCEL' THEN ? WHEN ? = 'REOPEN_DRAFT' THEN NULL ELSE cancellation_reason END,
+             cancelled_at = CASE WHEN ? = 'CANCEL' THEN CURRENT_TIMESTAMP(3) WHEN ? = 'REOPEN_DRAFT' THEN NULL ELSE cancelled_at END,
              updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
-        [nextStatus, action, session.userId, action, nextStatus, nextStatus, eventId],
+        [nextStatus, action, session.userId, action, nextStatus, nextStatus, action, reason || null, action, action, action, eventId],
       );
       if (action === "START" && event.bracket_enabled) await connection.execute(`UPDATE brackets SET status = 'LIVE', updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ?`, [eventId]);
       if (action === "COMPLETE" && event.bracket_enabled) await connection.execute(`UPDATE brackets SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ?`, [eventId]);
@@ -95,7 +101,20 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     throw error;
   }
 
-  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: `event.status.${nextStatus.toLowerCase()}`, targetType: "event", targetId: eventId, details: { previousStatus: event.status, action, bracketResult } });
+  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: `event.status.${nextStatus.toLowerCase()}`, targetType: "event", targetId: eventId, details: { previousStatus: event.status, action, reason: reason || null, bracketResult } });
+
+  if (action === "CANCEL") {
+    const recipients = await query<(RowDataPacket & { user_id: string })[]>(
+      `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants
+       WHERE event_id = ? AND status IN ('PENDING', 'APPROVED', 'WAITLISTED')`,
+      [eventId],
+    );
+    await Promise.allSettled(recipients.map((recipient) => getPool().execute(
+      `INSERT INTO notifications (id, user_id, event_id, notification_type, category, title, message, action_url)
+       VALUES (?, ?, ?, 'EVENT_CANCELLED', 'EVENTS', ?, ?, ?)`,
+      [randomUUID(), recipient.user_id, eventId, `${event.name} was cancelled`, reason, `/dashboard/events/${eventId}`],
+    )));
+  }
 
   const notificationByAction: Partial<Record<typeof action, WorkspaceWebhookNotification>> = {
     PUBLISH: nextStatus === "SIGNUPS_OPEN" ? "EVENT_PUBLISHED" : undefined,
@@ -108,7 +127,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     await dispatchWorkspaceWebhooks({
       workspaceId: event.workspace_id, eventId, notificationType,
       title: `${event.name} · ${nextStatus.replaceAll("_", " ")}`,
-      description: `${event.workspace_name} updated this event.${event.game_label ? `\nGame: ${event.game_label}` : ""}`,
+      description: `${event.workspace_name} updated this event.${event.game_label ? `\nGame: ${event.game_label}` : ""}${action === "CANCEL" ? `\nReason: ${reason}` : ""}`,
       url: appUrl ? `${appUrl}/dashboard/events/${eventId}` : null,
       fields: [
         { name: "Status", value: nextStatus.replaceAll("_", " "), inline: true },

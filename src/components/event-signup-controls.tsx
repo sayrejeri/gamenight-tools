@@ -11,16 +11,20 @@ export function EventSignupControls({
   eventId,
   eventStatus,
   participantStatus,
+  participantSignupCompleted,
   checkedIn,
   joinCodeRequired,
+  signupMode,
   requiredConnectionType,
   connections,
 }: {
   eventId: string;
   eventStatus: string;
   participantStatus: string | null;
+  participantSignupCompleted: boolean;
   checkedIn: boolean;
   joinCodeRequired: boolean;
+  signupMode: "AUTO" | "APPROVAL";
   requiredConnectionType: string | null;
   connections: ConnectionOption[];
 }) {
@@ -59,15 +63,17 @@ export function EventSignupControls({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, connectionId: connectionId || null }),
       });
-      const body = await response.json() as { error?: string; status?: string; checkedIn?: boolean };
+      const body = await response.json() as { error?: string; status?: string; checkedIn?: boolean; requiresApproval?: boolean };
       if (!response.ok) throw new Error(body.error ?? "Your event signup could not be updated.");
       setMessage(action === "CHECK_IN"
         ? "You are checked in."
         : action === "WITHDRAW"
           ? "You withdrew from the event."
-          : body.status === "WAITLISTED"
-            ? "The event is full, so you were added to the waitlist."
-            : "You are signed up.");
+          : body.status === "PENDING" || body.requiresApproval
+            ? "Your signup was submitted and is waiting for host approval."
+            : body.status === "WAITLISTED"
+              ? "The event is full, so you were added to the waitlist."
+              : "You are signed up.");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Your event signup could not be updated.");
@@ -76,9 +82,10 @@ export function EventSignupControls({
     }
   }
 
-  const pendingCompletion = participantStatus === "PENDING";
-  const activeParticipant = Boolean(participantStatus && !["PENDING", "WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus));
-  const canStartSignup = eventStatus === "SIGNUPS_OPEN" && (!activeParticipant || pendingCompletion);
+  const pendingCompletion = participantStatus === "PENDING" && !participantSignupCompleted;
+  const pendingApproval = participantStatus === "PENDING" && participantSignupCompleted && signupMode === "APPROVAL";
+  const withdrawableParticipant = Boolean(participantStatus && !["WITHDRAWN", "REJECTED", "DISQUALIFIED"].includes(participantStatus));
+  const canStartSignup = eventStatus === "SIGNUPS_OPEN" && (!withdrawableParticipant || pendingCompletion);
   const missingRequiredIdentity = Boolean(requiredConnectionType && !matchingConnections.length);
 
   return (
@@ -104,17 +111,18 @@ export function EventSignupControls({
       ) : null}
 
       {pendingCompletion ? <p className="muted">Your join code was accepted. Select the account you will use and complete your signup.</p> : null}
+      {pendingApproval ? <div className="event-pending-approval"><span className="badge">Awaiting host approval</span><p className="muted">Your signup is complete. A host will approve, waitlist, or decline it.</p></div> : null}
       {canStartSignup ? (
         <button className="button" type="button" disabled={busy || missingRequiredIdentity} onClick={() => run("SIGN_UP")}>
-          {busy ? "Updating…" : pendingCompletion ? "Complete signup" : joinCodeRequired ? "Complete signup after redeeming code" : "Sign up for event"}
+          {busy ? "Updating…" : pendingCompletion ? "Complete signup" : joinCodeRequired ? "Complete signup after redeeming code" : signupMode === "APPROVAL" ? "Submit signup for approval" : "Sign up for event"}
         </button>
       ) : null}
 
-      {eventStatus === "CHECK_IN_OPEN" && activeParticipant && !checkedIn ? (
+      {eventStatus === "CHECK_IN_OPEN" && participantStatus === "APPROVED" && !checkedIn ? (
         <button className="button" type="button" disabled={busy} onClick={() => run("CHECK_IN")}>{busy ? "Checking in…" : "Check in now"}</button>
       ) : null}
 
-      {activeParticipant ? (
+      {withdrawableParticipant && !pendingCompletion ? (
         <div className="button-row">
           <span className="badge">Signup: {participantStatus?.replaceAll("_", " ")}</span>
           {checkedIn ? <span className="badge">Checked in</span> : null}

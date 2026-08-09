@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
@@ -11,7 +12,9 @@ const requestSchema = z.object({
 
 type EventRow = RowDataPacket & {
   id: string;
+  name: string;
   status: string;
+  signup_mode: "AUTO" | "APPROVAL";
   signup_deadline: Date | null;
   check_in_opens_at: Date | null;
   check_in_deadline: Date | null;
@@ -38,7 +41,7 @@ export async function POST(
   const { eventId } = await context.params;
 
   const events = await query<EventRow[]>(
-    `SELECT id, status, signup_deadline, check_in_opens_at, check_in_deadline,
+    `SELECT id, name, status, signup_mode, signup_deadline, check_in_opens_at, check_in_deadline,
             max_participants, join_code_required, required_connection_type
      FROM events WHERE id = ? LIMIT 1`,
     [eventId],
@@ -57,7 +60,7 @@ export async function POST(
       return NextResponse.json({ error: "You are not actively signed up for this event." }, { status: 409 });
     }
 
-    await withTransaction(async (connection) => {
+    const promoted = await withTransaction(async (connection) => {
       await connection.execute(
         `UPDATE event_participants SET status = 'WITHDRAWN', checked_in_at = NULL
          WHERE event_id = ? AND user_id = ?`,
@@ -66,21 +69,28 @@ export async function POST(
 
       if (event.max_participants && existingParticipant.status === "APPROVED") {
         const [waitlist] = await connection.query<(RowDataPacket & { user_id: string })[]>(
-          `SELECT user_id FROM event_participants
+          `SELECT CAST(user_id AS CHAR) AS user_id FROM event_participants
            WHERE event_id = ? AND status = 'WAITLISTED'
            ORDER BY joined_at ASC LIMIT 1 FOR UPDATE`,
           [eventId],
         );
         if (waitlist[0]) {
           await connection.execute(
-            `UPDATE event_participants SET status = 'APPROVED'
+            `UPDATE event_participants SET status = 'APPROVED', reviewed_at = CURRENT_TIMESTAMP(3)
              WHERE event_id = ? AND user_id = ?`,
             [eventId, waitlist[0].user_id],
           );
+          await connection.execute(
+            `INSERT INTO notifications (id, user_id, event_id, notification_type, category, title, message, action_url)
+             VALUES (?, ?, ?, 'WAITLIST_PROMOTED', 'EVENTS', 'You are in!', ?, ?)`,
+            [randomUUID(), waitlist[0].user_id, eventId, `A spot opened up and you were moved off the waitlist for ${event.name}.`, `/dashboard/events/${eventId}`],
+          );
+          return waitlist[0].user_id;
         }
       }
+      return null;
     });
-    return NextResponse.json({ status: "WITHDRAWN" });
+    return NextResponse.json({ status: "WITHDRAWN", promotedWaitlistUser: Boolean(promoted) });
   }
 
   if (parsed.data.action === "CHECK_IN") {
@@ -139,28 +149,32 @@ export async function POST(
   }
 
   const result = await withTransaction(async (connection) => {
-    const [lockedEvents] = await connection.query<(RowDataPacket & { max_participants: number | null })[]>(
-      `SELECT max_participants FROM events WHERE id = ? LIMIT 1 FOR UPDATE`,
+    const [lockedEvents] = await connection.query<(RowDataPacket & { max_participants: number | null; signup_mode: "AUTO" | "APPROVAL" })[]>(
+      `SELECT max_participants, signup_mode FROM events WHERE id = ? LIMIT 1 FOR UPDATE`,
       [eventId],
     );
     const currentMaximum = lockedEvents[0]?.max_participants ?? null;
+    const signupMode = lockedEvents[0]?.signup_mode ?? "AUTO";
     const [approvedRows] = await connection.query<(RowDataPacket & { user_id: string })[]>(
       `SELECT user_id FROM event_participants
        WHERE event_id = ? AND status = 'APPROVED'`,
       [eventId],
     );
-    const status = currentMaximum && approvedRows.length >= currentMaximum
-      ? "WAITLISTED"
-      : "APPROVED";
+    const status = signupMode === "APPROVAL"
+      ? "PENDING"
+      : currentMaximum && approvedRows.length >= currentMaximum
+        ? "WAITLISTED"
+        : "APPROVED";
 
     await connection.execute(
       `INSERT INTO event_participants
-        (event_id, user_id, status, game_identity_type, game_identity_value)
-       VALUES (?, ?, ?, ?, ?)
+        (event_id, user_id, status, game_identity_type, game_identity_value, signup_completed_at)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP(3))
        ON DUPLICATE KEY UPDATE
          status = IF(status IN ('WITHDRAWN', 'PENDING', 'WAITLISTED'), VALUES(status), status),
          game_identity_type = VALUES(game_identity_type),
-         game_identity_value = VALUES(game_identity_value)`,
+         game_identity_value = VALUES(game_identity_value),
+         signup_completed_at = VALUES(signup_completed_at)`,
       [
         eventId,
         session.userId,
@@ -173,5 +187,5 @@ export async function POST(
     return status;
   });
 
-  return NextResponse.json({ status: result });
+  return NextResponse.json({ status: result, requiresApproval: result === "PENDING" && event.signup_mode === "APPROVAL" });
 }
