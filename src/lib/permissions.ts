@@ -34,6 +34,8 @@ type WorkspaceAccessRow = RowDataPacket & {
   platform_expires_at: Date | null;
 };
 
+type WorkspacePermissionSource = "WORKSPACE" | "PLATFORM" | "BOTH" | null;
+
 function isExpired(value: Date | null): boolean {
   return Boolean(value && new Date(value).getTime() <= Date.now());
 }
@@ -85,45 +87,56 @@ export async function getWorkspacePermissionSnapshot(userId: string, workspaceId
     [workspaceId, userId],
   );
   const row = rows[0];
-  if (!row) return { role: null, displayLabel: null, status: null, permissions: [] as WorkspacePermission[], expiresAt: null as Date | null, source: null as "WORKSPACE" | "PLATFORM" | null };
+  if (!row) return { role: null, displayLabel: null, status: null, permissions: [] as WorkspacePermission[], expiresAt: null as Date | null, source: null as WorkspacePermissionSource };
 
   if (isPlatformOwner(row.discord_id)) {
-    return { role: "OWNER", displayLabel: "Platform Owner", status: "ACTIVE", permissions: [...WORKSPACE_PERMISSIONS], expiresAt: null, source: "PLATFORM" as const };
+    return { role: "OWNER", displayLabel: "Platform Owner", status: "ACTIVE", permissions: [...WORKSPACE_PERMISSIONS], expiresAt: null, source: "PLATFORM" as WorkspacePermissionSource };
   }
 
-  if (row.workspace_role && row.workspace_status === "ACTIVE" && !isExpired(row.workspace_expires_at)) {
-    const defaults = WORKSPACE_ROLE_DEFAULTS[row.workspace_role] ?? [];
-    const overrides = parsePermissionOverrides(row.workspace_permissions_json, WORKSPACE_PERMISSIONS);
+  const directActive = Boolean(row.workspace_role && row.workspace_status === "ACTIVE" && !isExpired(row.workspace_expires_at));
+  const directPermissions: WorkspacePermission[] = directActive && row.workspace_role
+    ? getEffectivePermissions(
+        WORKSPACE_ROLE_DEFAULTS[row.workspace_role] ?? [],
+        parsePermissionOverrides(row.workspace_permissions_json, WORKSPACE_PERMISSIONS),
+        WORKSPACE_PERMISSIONS,
+      )
+    : [];
+
+  let platformWorkspacePermissions: WorkspacePermission[] = [];
+  let platformOwner = false;
+  const platformActive = Boolean(row.platform_role && row.platform_status === "ACTIVE" && !isExpired(row.platform_expires_at));
+  if (platformActive && row.platform_role) {
+    const platformPermissions = getEffectivePermissions(
+      PLATFORM_ROLE_DEFAULTS[row.platform_role] ?? [],
+      parsePermissionOverrides(row.platform_permissions_json, PLATFORM_PERMISSIONS),
+      PLATFORM_PERMISSIONS,
+    );
+    platformOwner = row.platform_role === "OWNER";
+    if (platformOwner) platformWorkspacePermissions = [...WORKSPACE_PERMISSIONS];
+    else if (platformPermissions.includes("MANAGE_SERVERS")) platformWorkspacePermissions = [...(WORKSPACE_ROLE_DEFAULTS.ADMIN ?? [])] as WorkspacePermission[];
+  }
+
+  const combined = WORKSPACE_PERMISSIONS.filter((permission) => directPermissions.includes(permission) || platformWorkspacePermissions.includes(permission));
+  const source: WorkspacePermissionSource = directPermissions.length && platformWorkspacePermissions.length
+    ? "BOTH"
+    : directPermissions.length
+      ? "WORKSPACE"
+      : platformWorkspacePermissions.length
+        ? "PLATFORM"
+        : null;
+
+  if (combined.length) {
     return {
-      role: row.workspace_role,
-      displayLabel: row.workspace_display_label ?? row.workspace_role,
-      status: row.workspace_status,
-      permissions: getEffectivePermissions(defaults, overrides, WORKSPACE_PERMISSIONS),
-      expiresAt: row.workspace_expires_at,
-      source: "WORKSPACE" as const,
+      role: platformOwner ? "OWNER" : row.workspace_role ?? (platformWorkspacePermissions.length ? "ADMIN" : null),
+      displayLabel: row.workspace_display_label ?? (platformOwner ? "Platform Owner" : platformWorkspacePermissions.length ? "Platform Admin" : row.workspace_role),
+      status: "ACTIVE",
+      permissions: combined,
+      expiresAt: row.workspace_expires_at ?? row.platform_expires_at,
+      source,
     };
   }
 
-  if (row.platform_role && row.platform_status === "ACTIVE" && !isExpired(row.platform_expires_at)) {
-    const platformDefaults = PLATFORM_ROLE_DEFAULTS[row.platform_role] ?? [];
-    const platformOverrides = parsePermissionOverrides(row.platform_permissions_json, PLATFORM_PERMISSIONS);
-    const platformPermissions = getEffectivePermissions(platformDefaults, platformOverrides, PLATFORM_PERMISSIONS);
-    if (row.platform_role === "OWNER") {
-      return { role: "OWNER", displayLabel: "Platform Owner", status: "ACTIVE", permissions: [...WORKSPACE_PERMISSIONS], expiresAt: row.platform_expires_at, source: "PLATFORM" as const };
-    }
-    if (platformPermissions.includes("MANAGE_SERVERS")) {
-      return {
-        role: "ADMIN",
-        displayLabel: "Platform Admin",
-        status: "ACTIVE",
-        permissions: [...(WORKSPACE_ROLE_DEFAULTS.ADMIN ?? [])],
-        expiresAt: row.platform_expires_at,
-        source: "PLATFORM" as const,
-      };
-    }
-  }
-
-  return { role: row.workspace_role, displayLabel: row.workspace_display_label, status: row.workspace_status, permissions: [] as WorkspacePermission[], expiresAt: row.workspace_expires_at, source: null as "WORKSPACE" | "PLATFORM" | null };
+  return { role: row.workspace_role, displayLabel: row.workspace_display_label, status: row.workspace_status, permissions: [] as WorkspacePermission[], expiresAt: row.workspace_expires_at, source: null as WorkspacePermissionSource };
 }
 
 export async function hasWorkspacePermission(userId: string, workspaceId: string, permission: WorkspacePermission): Promise<boolean> {
