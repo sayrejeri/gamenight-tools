@@ -13,7 +13,14 @@ ALTER TABLE events
   ADD CONSTRAINT events_cloned_from_fk FOREIGN KEY (cloned_from_event_id) REFERENCES events(id) ON DELETE SET NULL;
 
 ALTER TABLE event_participants
-  ADD COLUMN staff_note VARCHAR(1000) NULL AFTER game_identity_value,
+  ADD COLUMN signup_completed_at DATETIME(3) NULL AFTER game_identity_value,
+  ADD COLUMN staff_note VARCHAR(1000) NULL AFTER signup_completed_at,
   ADD COLUMN reviewed_by BIGINT UNSIGNED NULL AFTER staff_note,
   ADD COLUMN reviewed_at DATETIME(3) NULL AFTER reviewed_by,
   ADD CONSTRAINT event_participants_reviewed_by_fk FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL;
+
+-- Existing active participant records predate the completion marker and were already treated as completed signups.
+UPDATE event_participants
+SET signup_completed_at = joined_at
+WHERE status IN ('APPROVED', 'WAITLISTED', 'NO_SHOW', 'DISQUALIFIED')
+  AND signup_completed_at IS NULL;
