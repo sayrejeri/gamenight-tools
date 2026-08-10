@@ -7,17 +7,20 @@ import { query, withTransaction } from "@/lib/db";
 
 const reviewSchema = z.object({ decision: z.enum(["ACCEPTED", "DENIED"]), role: z.enum(["MANAGER", "CAPTAIN", "PLAYER", "SUBSTITUTE", "COACH"]).optional() });
 
+type ReviewerRow = RowDataPacket & { role: "OWNER" | "MANAGER" };
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ teamId: string; applicationId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const parsed = reviewSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid application decision." }, { status: 400 });
   const { teamId, applicationId } = await context.params;
-  const access = await query<RowDataPacket[]>(
-    `SELECT team_id FROM team_members WHERE team_id = ? AND user_id = ? AND status = 'ACTIVE' AND role IN ('OWNER', 'MANAGER') LIMIT 1`,
+  const access = await query<ReviewerRow[]>(
+    `SELECT role FROM team_members WHERE team_id = ? AND user_id = ? AND status = 'ACTIVE' AND role IN ('OWNER', 'MANAGER') LIMIT 1`,
     [teamId, session.userId],
   );
-  if (!access[0]) return NextResponse.json({ error: "Team owner or manager access is required." }, { status: 403 });
+  const reviewer = access[0];
+  if (!reviewer) return NextResponse.json({ error: "Team owner or manager access is required." }, { status: 403 });
   const applications = await query<(RowDataPacket & { applicant_user_id: string; desired_role: string; team_name: string; slug: string })[]>(
     `SELECT ta.applicant_user_id, ta.desired_role, t.name AS team_name, t.slug
      FROM team_applications ta INNER JOIN teams t ON t.id = ta.team_id
@@ -26,6 +29,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
   );
   const application = applications[0];
   if (!application) return NextResponse.json({ error: "Application not found." }, { status: 404 });
+
+  const acceptedRole = parsed.data.role ?? application.desired_role;
+  if (parsed.data.decision === "ACCEPTED" && acceptedRole === "MANAGER" && reviewer.role !== "OWNER") {
+    return NextResponse.json({ error: "Only the team owner can grant Manager access." }, { status: 403 });
+  }
 
   await withTransaction(async (connection) => {
     await connection.execute(
@@ -38,7 +46,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
         `INSERT INTO team_members (team_id, user_id, role, status, invited_by, joined_at)
          VALUES (?, ?, ?, 'ACTIVE', ?, CURRENT_TIMESTAMP(3))
          ON DUPLICATE KEY UPDATE role = VALUES(role), status = 'ACTIVE', invited_by = VALUES(invited_by), joined_at = CURRENT_TIMESTAMP(3)`,
-        [teamId, application.applicant_user_id, parsed.data.role ?? application.desired_role, session.userId],
+        [teamId, application.applicant_user_id, acceptedRole, session.userId],
       );
     }
     await connection.execute(
