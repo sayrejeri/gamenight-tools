@@ -1,11 +1,18 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { currentCompetitiveSeason, loadPlayerLeaderboard, loadTeamLeaderboard, type CompetitiveFilters } from "@/lib/competitive-stats";
+import {
+  currentCompetitiveSeason,
+  loadCompetitiveGames,
+  loadDecidedMatchCount,
+  loadPlayerLeaderboard,
+  loadTeamLeaderboard,
+  type CompetitiveFilters,
+} from "@/lib/competitive-stats";
 
 type WorkspaceRow = RowDataPacket & { id: string; name: string };
-type GameRow = RowDataPacket & { game_name: string };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 function one(value: string | string[] | undefined): string { return Array.isArray(value) ? value[0] ?? "" : value ?? ""; }
@@ -15,35 +22,41 @@ export default async function LeaderboardsPage({ searchParams }: { searchParams:
   const params = await searchParams;
   const mode = one(params.mode) === "teams" ? "teams" : "players";
   const scope = one(params.scope) === "season" ? "season" : "all";
-  const workspaceId = one(params.workspace) || null;
+  const requestedWorkspaceId = one(params.workspace) || null;
   const game = one(params.game) || null;
   const season = currentCompetitiveSeason();
+
+  const workspaces = await query<WorkspaceRow[]>(
+    `SELECT DISTINCT w.id, w.name FROM workspaces w
+     INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id
+     WHERE ug.user_id = ? AND w.profile_status = 'APPROVED' ORDER BY w.name`,
+    [session.userId],
+  );
+  const allowedWorkspaceIds = workspaces.map((workspace) => workspace.id);
+  if (requestedWorkspaceId && !allowedWorkspaceIds.includes(requestedWorkspaceId)) notFound();
+
   const filters: CompetitiveFilters = {
-    workspaceId,
+    workspaceIds: allowedWorkspaceIds,
+    workspaceId: requestedWorkspaceId,
     game,
     from: scope === "season" ? season.start : null,
     to: scope === "season" ? season.end : null,
+    viewerUserId: session.userId,
+  };
+  const discoveryFilters: CompetitiveFilters = {
+    workspaceIds: allowedWorkspaceIds,
+    viewerUserId: session.userId,
   };
 
-  const [workspaces, games, playerRows, teamRows] = await Promise.all([
-    query<WorkspaceRow[]>(
-      `SELECT DISTINCT w.id, w.name FROM workspaces w
-       INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id
-       WHERE ug.user_id = ? AND w.profile_status = 'APPROVED' ORDER BY w.name`,
-      [session.userId],
-    ),
-    query<GameRow[]>(
-      `SELECT DISTINCT COALESCE(e.subgame_name, e.game_name, e.platform_name, 'Game Night') AS game_name
-       FROM bracket_matches bm INNER JOIN brackets br ON br.id = bm.bracket_id INNER JOIN events e ON e.id = br.event_id
-       WHERE bm.status IN ('COMPLETED', 'FORFEIT') ORDER BY game_name`,
-    ),
+  const [games, playerRows, teamRows, totalMatches] = await Promise.all([
+    loadCompetitiveGames(discoveryFilters),
     mode === "players" ? loadPlayerLeaderboard(filters) : Promise.resolve([]),
     mode === "teams" ? loadTeamLeaderboard(filters) : Promise.resolve([]),
+    loadDecidedMatchCount(filters),
   ]);
 
   const totalCompetitors = mode === "players" ? playerRows.length : teamRows.length;
-  const totalMatches = mode === "players" ? playerRows.reduce((sum, row) => sum + row.matches, 0) / 2 : teamRows.reduce((sum, row) => sum + row.matches, 0) / 2;
-  const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? null;
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === requestedWorkspaceId)?.name ?? null;
   const scopeLabel = scope === "season" ? season.label : "All time";
 
   return (
@@ -57,14 +70,14 @@ export default async function LeaderboardsPage({ searchParams }: { searchParams:
         <form className="competitive-filter-grid" method="get">
           <input type="hidden" name="mode" value={mode} />
           <label><span>Time period</span><select name="scope" defaultValue={scope}><option value="all">All time</option><option value="season">{season.label}</option></select></label>
-          <label><span>Server</span><select name="workspace" defaultValue={workspaceId ?? ""}><option value="">All available servers</option>{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select></label>
-          <label><span>Game</span><select name="game" defaultValue={game ?? ""}><option value="">All games</option>{games.map((item) => <option value={item.game_name} key={item.game_name}>{item.game_name}</option>)}</select></label>
+          <label><span>Server</span><select name="workspace" defaultValue={requestedWorkspaceId ?? ""}><option value="">All available servers</option>{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select></label>
+          <label><span>Game</span><select name="game" defaultValue={game ?? ""}><option value="">All games</option>{games.map((gameName) => <option value={gameName} key={gameName}>{gameName}</option>)}</select></label>
           <button className="button" type="submit">Apply filters</button>
         </form>
         <div className="button-row"><span className="badge">{scopeLabel}</span>{selectedWorkspace ? <span className="badge">{selectedWorkspace}</span> : null}{game ? <span className="badge">{game}</span> : null}</div>
       </section>
 
-      <div className="tournament-stat-grid competitive-summary-grid"><div className="stat-card"><span>{mode === "players" ? "Ranked players" : "Ranked teams"}</span><strong>{totalCompetitors}</strong></div><div className="stat-card"><span>Recorded matches</span><strong>{Math.floor(totalMatches)}</strong></div><div className="stat-card"><span>Leaderboard scope</span><strong>{scope === "season" ? "Season" : "Career"}</strong></div><div className="stat-card"><span>Top priority</span><strong>🏆 Titles</strong></div></div>
+      <div className="tournament-stat-grid competitive-summary-grid"><div className="stat-card"><span>{mode === "players" ? "Ranked players" : "Ranked teams"}</span><strong>{totalCompetitors}</strong></div><div className="stat-card"><span>Recorded matches</span><strong>{totalMatches}</strong></div><div className="stat-card"><span>Leaderboard scope</span><strong>{scope === "season" ? "Season" : "Career"}</strong></div><div className="stat-card"><span>Top priority</span><strong>🏆 Titles</strong></div></div>
 
       {mode === "players" ? (
         playerRows.length ? <section className="panel leaderboard-table-shell"><div className="leaderboard-table"><div className="leaderboard-row leaderboard-head"><span>Rank</span><span>Player</span><span>Record</span><span>Win rate</span><span>Titles</span><span>Best streak</span><span>Events</span></div>{playerRows.map((row, index) => {
