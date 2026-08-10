@@ -7,7 +7,6 @@ import { getWorkspaceRole } from "@/lib/access";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { query, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
-import { getEventViewerAccess } from "@/lib/event-view-access";
 
 const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
 const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "GROUPS_PLAYOFFS"]);
@@ -52,37 +51,31 @@ export async function GET() {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
 
-  // Limit the candidate set to events related to this viewer, then apply the
-  // same event-level authorization used by direct event views. This prevents
-  // VIEWER/REFEREE membership from becoming blanket restricted-event access.
-  const candidates = await query<EventRow[]>(
+  // Keep discovery authorization in one bounded query. Merely holding any
+  // workspace_members row is not enough to reveal restricted event metadata.
+  const events = await query<EventRow[]>(
     `SELECT DISTINCT e.id, e.workspace_id, w.name AS workspace_name, e.name, e.game_name,
             e.platform_name, e.subgame_name, e.game_thumbnail_url, e.status, e.visibility, e.starts_at
      FROM events e
      INNER JOIN workspaces w ON w.id = e.workspace_id
-     LEFT JOIN workspace_members wm ON wm.workspace_id = e.workspace_id AND wm.user_id = ? AND wm.status = 'ACTIVE'
      LEFT JOIN user_guilds ug ON ug.user_id = ? AND ug.guild_id = w.discord_guild_id
      LEFT JOIN event_cohosts ec ON ec.event_id = e.id AND ec.invited_user_id = ? AND ec.status = 'ACCEPTED'
      LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ? AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')
-     WHERE e.visibility = 'PUBLIC'
-        OR ug.user_id IS NOT NULL
-        OR wm.user_id IS NOT NULL
-        OR CAST(e.primary_host_id AS CHAR) = ?
+     WHERE CAST(e.primary_host_id AS CHAR) = ?
         OR ec.invited_user_id IS NOT NULL
-        OR ep.user_id IS NOT NULL
-     ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC`,
-    [session.userId, session.userId, session.userId, session.userId, session.userId],
+        OR (
+          e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL')
+          AND (
+            e.visibility = 'PUBLIC'
+            OR (e.visibility = 'SERVER' AND (ug.user_id IS NOT NULL OR ep.user_id IS NOT NULL))
+            OR (e.visibility = 'CODE_ONLY' AND ep.user_id IS NOT NULL)
+            OR (e.visibility = 'UNLISTED' AND ep.user_id IS NOT NULL)
+          )
+        )
+     ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC
+     LIMIT 100`,
+    [session.userId, session.userId, session.userId, session.userId],
   );
-
-  const events: EventRow[] = [];
-  for (const event of candidates) {
-    const access = await getEventViewerAccess(session.userId, event.id);
-    if (!access.canView) continue;
-    if (event.visibility === "UNLISTED" && !access.manager) continue;
-    if (event.visibility === "STAFF_ONLY" && !access.manager) continue;
-    if (event.visibility === "CODE_ONLY" && !access.manager && !access.participant) continue;
-    events.push(event);
-  }
   return NextResponse.json({ events });
 }
 
