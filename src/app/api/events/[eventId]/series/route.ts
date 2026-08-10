@@ -131,6 +131,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
   const { eventId } = await context.params;
   const access = await getTournamentAccess(session.userId, eventId);
   if (!access.event || !access.event.bracket_enabled) return NextResponse.json({ error: "Tournament event not found." }, { status: 404 });
+  if (access.event.status !== "LIVE") return NextResponse.json({ error: "The event must be live before a series result can be submitted." }, { status: 409 });
 
   try {
     const outcome = await withTransaction(async (connection) => {

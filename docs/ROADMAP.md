@@ -66,23 +66,31 @@
 - Event Control Room combines live match attention, scoreboard, timer, and saved-pool picking for tournament staff
 - Competition pages link staff into the Control Room and participants into the Series Desk
 
-## Next — v0.9 Competitive Profiles & Leaderboards
+## v0.9 — Competitive Profiles & Leaderboards
 
-- Dedicated competitive profile pages
-- Seasonal, server, game, and all-time leaderboards
-- Full tournament history, placements, championships, and best streaks
-- Server leaderboards and game-specific statistics
-- Attendance and no-show history
-- Competitive badges and profile highlights
+- Dedicated competitive player profile pages
+- Career and current-season W/L, win rate, championships, events played, and streaks
+- Player and approved-team leaderboards
+- All-time and quarterly seasonal ranking views
+- Server/workspace and game-specific leaderboard filters
+- Tournament history, recent opponents, and game-by-game competitive records
+- Attendance/check-in and no-show reliability stats
+- Automatically derived competitive badges and profile highlights
+- Existing profile privacy and block rules apply to competitive history
+- Series reporting hardened so hidden/cancelled/postponed/draft events cannot mutate live match state
 
-## Later — Optional Discord bot
+## Next — v1.0 Platform Polish & Discord Bot Beta
 
-- Bot installation remains optional
-- Opt-in Discord DM reminders
-- Signup, check-in, match, and winner announcements
-- Slash commands and automatic result posts
-- Optional role synchronization and temporary match channels
-- Clear failure handling when Discord privacy settings block DMs
+- Optional Discord bot installation per workspace
+- Opt-in Discord DM reminders for signups, check-in, scheduled matches, and result confirmation
+- Signup, check-in, match-ready, match-result, and tournament-winner announcements
+- Slash commands for event status, upcoming matches, brackets, standings, and leaderboards
+- Optional temporary match channels with cleanup after completion
+- Optional role synchronization for hosts, competitors, champions, and event-specific roles
+- Clear failure handling when Discord privacy settings block DMs or the bot lacks permissions
+- Mobile and accessibility polish across tournament, profile, and leaderboard screens
+- Public competitive pages and spectator presentation polish
+- Final navigation, onboarding, settings, and permission cleanup for the 1.0 milestone
 
 ## Later — Community history and event QOL
 
@@ -90,3 +98,4 @@
 - Event recap generator and Discord-ready images
 - Prizes, claim status, and delivery records
 - Calendar files and calendar-service links
+- Ranked seasons/MMR as an optional competitive mode after the history system has enough real match data
