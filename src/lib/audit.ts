@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import type { PoolConnection } from "mysql2/promise";
 import { getPool } from "@/lib/db";
 
 export type AuditSeverity = "INFO" | "MODERATION" | "PERMISSIONS" | "SECURITY";
+
+type AuditExecutor = Pick<PoolConnection, "execute">;
 
 export async function writeAuditLog(input: {
   actorUserId: string;
@@ -13,8 +16,9 @@ export async function writeAuditLog(input: {
   details?: unknown;
   severity?: AuditSeverity;
   sensitive?: boolean;
-}) {
-  await getPool().execute(
+}, executor?: AuditExecutor) {
+  const target = executor ?? getPool();
+  await target.execute(
     `INSERT INTO audit_logs
       (id, workspace_id, event_id, actor_user_id, action_name, severity, is_sensitive, target_type, target_id, details_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
