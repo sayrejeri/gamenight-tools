@@ -14,6 +14,7 @@ type MatchRow = RowDataPacket & {
   score_a: number | null; score_b: number | null; report_status: string | null; game_results_json: string | null;
 };
 type RosterMember = { userId: string };
+type TeamRosterRow = RowDataPacket & { roster_json: string | null };
 
 function parseRoster(value: string | null): RosterMember[] {
   if (!value) return [];
@@ -57,7 +58,17 @@ export default async function EventSeriesPage({ params }: { params: Promise<{ ev
   const access = await getTournamentAccess(session.userId, eventId);
   if (!access.event || !access.event.bracket_enabled) notFound();
 
-  const brackets = await query<BracketRow[]>(`SELECT id, status FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]);
+  const [participantRows, teamRows, brackets] = await Promise.all([
+    query<(RowDataPacket & { status: string })[]>(
+      `SELECT status FROM event_participants WHERE event_id = ? AND user_id = ? AND status NOT IN ('REJECTED', 'WITHDRAWN') LIMIT 1`,
+      [eventId, session.userId],
+    ),
+    query<TeamRosterRow[]>(`SELECT roster_json FROM event_team_entries WHERE event_id = ? AND status = 'REGISTERED'`, [eventId]),
+    query<BracketRow[]>(`SELECT id, status FROM brackets WHERE event_id = ? LIMIT 1`, [eventId]),
+  ]);
+  const registeredTeamMember = teamRows.some((row) => parseRoster(row.roster_json).some((member) => member.userId === session.userId));
+  if (!access.manager && !participantRows[0] && !registeredTeamMember) notFound();
+
   const bracket = brackets[0];
   if (!bracket) return <section className="panel section-stack"><h1>Series desk unavailable</h1><p className="muted">Generate and save the event competition first.</p><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link></section>;
 
