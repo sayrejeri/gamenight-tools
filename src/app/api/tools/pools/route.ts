@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
-import { query, withTransaction } from "@/lib/db";
+import { getPool, query, withTransaction } from "@/lib/db";
 
 const itemSchema = z.object({
   label: z.string().trim().min(1).max(191),
@@ -158,9 +158,9 @@ export async function DELETE(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const parsed = deleteSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid saved pool." }, { status: 400 });
-  const result = await query(
+  await getPool().execute(
     `DELETE FROM game_night_pools WHERE id = ? AND owner_user_id = ?`,
     [parsed.data.id, session.userId],
   );
-  return NextResponse.json({ success: true, result: Boolean(result) });
+  return NextResponse.json({ success: true });
 }
