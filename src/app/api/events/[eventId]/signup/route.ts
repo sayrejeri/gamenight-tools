@@ -57,6 +57,9 @@ export async function POST(
   );
   const existingParticipant = existing[0] ?? null;
 
+  // Withdrawal remains available to an existing entrant even if an organizer
+  // later restricts the event; every other participation mutation must pass the
+  // event's current visibility policy first.
   if (parsed.data.action === "WITHDRAW") {
     if (!existingParticipant || ["WITHDRAWN", "REJECTED"].includes(existingParticipant.status)) {
       return NextResponse.json({ error: "You are not actively signed up for this event." }, { status: 409 });
@@ -95,6 +98,14 @@ export async function POST(
     return NextResponse.json({ status: "WITHDRAWN", promotedWaitlistUser: Boolean(promoted) });
   }
 
+  const eventAccess = await getEventViewerAccess(session.userId, eventId);
+  if (!eventAccess.event || !eventAccess.canView) {
+    return NextResponse.json({ error: "You do not have access to participate in this event." }, { status: 403 });
+  }
+  if (eventAccess.event.visibility === "STAFF_ONLY" && !eventAccess.manager) {
+    return NextResponse.json({ error: "This event is limited to authorized event staff." }, { status: 403 });
+  }
+
   if (event.bracket_entry_mode === "TEAM") {
     return NextResponse.json(
       { error: "This event uses team registration. Register or manage your team from the tournament teams page." },
@@ -127,13 +138,6 @@ export async function POST(
     return NextResponse.json({ status: existingParticipant.status, checkedIn: true });
   }
 
-  const eventAccess = await getEventViewerAccess(session.userId, eventId);
-  if (!eventAccess.event || !eventAccess.canView) {
-    return NextResponse.json({ error: "You do not have access to sign up for this event." }, { status: 403 });
-  }
-  if (eventAccess.event.visibility === "STAFF_ONLY" && !eventAccess.manager) {
-    return NextResponse.json({ error: "This event is limited to authorized event staff." }, { status: 403 });
-  }
   if (eventAccess.event.visibility === "CODE_ONLY" && !eventAccess.participant && !eventAccess.manager) {
     return NextResponse.json({ error: "Redeem the event join code before signing up." }, { status: 403 });
   }
