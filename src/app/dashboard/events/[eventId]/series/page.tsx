@@ -68,6 +68,7 @@ export default async function EventSeriesPage({ params }: { params: Promise<{ ev
   ]);
   const registeredTeamMember = teamRows.some((row) => parseRoster(row.roster_json).some((member) => member.userId === session.userId));
   if (!access.manager && !participantRows[0] && !registeredTeamMember) notFound();
+  if (!access.manager && !["LIVE", "COMPLETED"].includes(access.event.status)) notFound();
 
   const bracket = brackets[0];
   if (!bracket) return <section className="panel section-stack"><h1>Series desk unavailable</h1><p className="muted">Generate and save the event competition first.</p><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link></section>;
@@ -110,7 +111,7 @@ export default async function EventSeriesPage({ params }: { params: Promise<{ ev
   return (
     <div className="section-stack">
       <section className="page-heading"><div><span className="eyebrow">Tournament series</span><h1>{access.event.name} Series Desk</h1><p>Report best-of matches game by game, including maps, modes, winners, and optional per-game scores.</p></div><div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}/matches`}>Match Center</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Event</Link></div></section>
-      <div className="rule-callout"><strong>How series reporting works</strong><p>Complete enough game rows for one side to clinch the best-of series. The overall result is then sent to the normal opponent-confirmation flow in Match Center.</p></div>
+      {access.event.status !== "LIVE" ? <div className="rule-callout"><strong>Series reporting paused</strong><p>This event is currently {access.event.status.replaceAll("_", " ").toLowerCase()}. Tournament staff can review saved series history here, but new series reports are accepted only while the event is live.</p></div> : <div className="rule-callout"><strong>How series reporting works</strong><p>Complete enough game rows for one side to clinch the best-of series. The overall result is then sent to the normal opponent-confirmation flow in Match Center.</p></div>}
       <SeriesReportingDesk eventId={eventId} matches={matches} canManage={access.manager} />
     </div>
   );
