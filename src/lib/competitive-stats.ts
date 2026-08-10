@@ -179,10 +179,15 @@ function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alia
   } else {
     clauses.push(`(
       ${alias}.visibility = 'PUBLIC'
-      OR (${alias}.visibility = 'SERVER' AND EXISTS(
-        SELECT 1 FROM user_guilds cug
-        INNER JOIN workspaces cgw ON cgw.discord_guild_id = cug.guild_id
-        WHERE cug.user_id = ? AND cgw.id = ${alias}.workspace_id
+      OR (${alias}.visibility = 'SERVER' AND (
+        EXISTS(
+          SELECT 1 FROM user_guilds cug
+          INNER JOIN workspaces cgw ON cgw.discord_guild_id = cug.guild_id
+          WHERE cug.user_id = ? AND cgw.id = ${alias}.workspace_id
+        )
+        OR ${alias}.primary_host_id = ?
+        OR EXISTS(SELECT 1 FROM event_cohosts svc WHERE svc.event_id = ${alias}.id AND svc.invited_user_id = ? AND svc.status = 'ACCEPTED')
+        OR EXISTS(SELECT 1 FROM event_participants svp WHERE svp.event_id = ${alias}.id AND svp.user_id = ? AND svp.status NOT IN ('REJECTED', 'WITHDRAWN'))
       ))
       OR (${alias}.visibility IN ('UNLISTED', 'CODE_ONLY') AND (
         ${alias}.primary_host_id = ?
@@ -194,7 +199,7 @@ function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alia
         OR EXISTS(SELECT 1 FROM event_cohosts sec WHERE sec.event_id = ${alias}.id AND sec.invited_user_id = ? AND sec.status = 'ACCEPTED')
       ))
     )`);
-    values.push(viewerUserId, viewerUserId, viewerUserId, viewerUserId, viewerUserId, viewerUserId);
+    values.push(...Array(9).fill(viewerUserId));
   }
 
   return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", values };
