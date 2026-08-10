@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connections";
+import { getEventViewerAccess } from "@/lib/event-view-access";
 import { PlatformIcon } from "@/components/platform-icon";
 import { LocalDateTime } from "@/components/local-date-time";
 import { BrandMark } from "@/components/brand-mark";
@@ -30,7 +31,7 @@ type UserRow = RowDataPacket & {
 type ConnectionRow = RowDataPacket & { connection_type: string; external_id: string | null; handle: string; display_name: string | null; profile_url: string | null; avatar_url: string | null; is_verified: number };
 type TeamRow = RowDataPacket & { id: string; slug: string; name: string; tag: string | null; logo_url: string | null; role: string };
 type WorkspaceRow = RowDataPacket & { id: string; name: string; icon_url: string | null; banner_url: string | null; role: string };
-type EventRow = RowDataPacket & { id: string; name: string; status: string; starts_at: Date | null; workspace_name: string };
+type EventRow = RowDataPacket & { id: string; name: string; status: string; visibility: string; starts_at: Date | null; workspace_name: string };
 type BlockRow = RowDataPacket & { blocker_user_id: string; blocked_user_id: string };
 
 export const dynamic = "force-dynamic";
@@ -66,7 +67,7 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
     viewerHasBlocked = blocked.some((item) => item.blocker_user_id === viewer.userId);
   }
 
-  const [connections, teams, workspaces, events] = await Promise.all([
+  const [connections, teams, workspaces, eventCandidates] = await Promise.all([
     user.show_game_identities || isOwner ? query<ConnectionRow[]>(
       `SELECT connection_type, external_id, handle, display_name, profile_url, avatar_url, is_verified
        FROM user_connections WHERE user_id = ? AND (is_visible = 1 OR ? = 1)
@@ -88,16 +89,27 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
       [user.id],
     ) : Promise.resolve([] as WorkspaceRow[]),
     user.show_event_history || isOwner ? query<EventRow[]>(
-      `SELECT e.id, e.name, e.status, e.starts_at, w.name AS workspace_name
+      `SELECT e.id, e.name, e.status, e.visibility, e.starts_at, w.name AS workspace_name
        FROM event_participants ep
        INNER JOIN events e ON e.id = ep.event_id
        INNER JOIN workspaces w ON w.id = e.workspace_id
        WHERE ep.user_id = ? AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')
          AND e.status IN ('LIVE', 'COMPLETED')
-       ORDER BY COALESCE(e.starts_at, e.created_at) DESC LIMIT 12`,
+       ORDER BY COALESCE(e.starts_at, e.created_at) DESC LIMIT 24`,
       [user.id],
     ) : Promise.resolve([] as EventRow[]),
   ]);
+
+  const events: EventRow[] = [];
+  for (const event of eventCandidates) {
+    const access = await getEventViewerAccess(viewer?.userId ?? null, event.id);
+    if (!access.canView) continue;
+    // Unlisted means link-only. Do not make it discoverable through somebody
+    // else's profile unless the viewer owns the profile or manages the event.
+    if (event.visibility === "UNLISTED" && !isOwner && !access.manager) continue;
+    events.push(event);
+    if (events.length >= 12) break;
+  }
 
   const avatarUrl = getDiscordAvatarUrl(user.discord_id, user.avatar_hash);
   return (
@@ -122,7 +134,7 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
         <section className="panel section-stack"><div className="section-header"><div><h2>Server roles</h2><p>Approved server profiles this member helps run.</p></div></div>{workspaces.length ? <div className="compact-list">{workspaces.map((workspace) => <Link className="list-card" href={`/dashboard/workspaces/${workspace.id}`} key={workspace.id}>{workspace.icon_url ? <img src={workspace.icon_url} alt="" /> : <span className="list-icon">{workspace.name.slice(0, 2)}</span>}<div><strong>{workspace.name}</strong><span>{workspace.role.toLowerCase()}</span></div></Link>)}</div> : <div className="empty-state">No public server roles.</div>}</section>
       </div>
 
-      {events.length ? <section className="panel section-stack"><div className="section-header"><div><h2>Recent events</h2><p>Completed and currently live events.</p></div></div><div className="event-grid">{events.map((event) => <Link className="event-card" href={`/dashboard/events/${event.id}`} key={event.id}><span className="card-kicker">{event.workspace_name}</span><h3>{event.name}</h3><p><LocalDateTime value={event.starts_at ? new Date(event.starts_at).toISOString() : null} /></p><span className="badge">{event.status.replaceAll("_", " ")}</span></Link>)}</div></section> : null}
+      {events.length ? <section className="panel section-stack"><div className="section-header"><div><h2>Recent events</h2><p>Completed and currently live events this viewer is allowed to see.</p></div></div><div className="event-grid">{events.map((event) => <Link className="event-card" href={`/dashboard/events/${event.id}`} key={event.id}><span className="card-kicker">{event.workspace_name}</span><h3>{event.name}</h3><p><LocalDateTime value={event.starts_at ? new Date(event.starts_at).toISOString() : null} /></p><span className="badge">{event.status.replaceAll("_", " ")}</span></Link>)}</div></section> : null}
     </main>
   );
 }
