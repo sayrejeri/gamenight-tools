@@ -7,6 +7,7 @@ import { getWorkspaceRole } from "@/lib/access";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { query, withTransaction } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
+import { getEventManagerWorkspaceScope } from "@/lib/event-view-access";
 
 const optionalUrl = z.string().trim().url().max(1000).nullable().optional().or(z.literal(""));
 const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "GROUPS_PLAYOFFS"]);
@@ -51,8 +52,16 @@ export async function GET() {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
 
-  // Keep discovery authorization in one bounded query. Merely holding any
-  // workspace_members row is not enough to reveal restricted event metadata.
+  const managerScope = await getEventManagerWorkspaceScope(session.userId);
+  const managerSql = managerScope.allWorkspaces
+    ? "1 = 1"
+    : managerScope.workspaceIds.length
+      ? `e.workspace_id IN (${managerScope.workspaceIds.map(() => "?").join(",")})`
+      : "1 = 0";
+
+  // Discovery stays bounded and authorization is applied in this single event
+  // query. Workspace access only grants restricted/draft discovery when the
+  // user's effective permissions actually include event-management powers.
   const events = await query<EventRow[]>(
     `SELECT DISTINCT e.id, e.workspace_id, w.name AS workspace_name, e.name, e.game_name,
             e.platform_name, e.subgame_name, e.game_thumbnail_url, e.status, e.visibility, e.starts_at
@@ -63,6 +72,7 @@ export async function GET() {
      LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ? AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')
      WHERE CAST(e.primary_host_id AS CHAR) = ?
         OR ec.invited_user_id IS NOT NULL
+        OR (${managerSql})
         OR (
           e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL')
           AND (
@@ -74,7 +84,7 @@ export async function GET() {
         )
      ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC
      LIMIT 100`,
-    [session.userId, session.userId, session.userId, session.userId],
+    [session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds],
   );
   return NextResponse.json({ events });
 }
