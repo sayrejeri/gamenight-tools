@@ -17,7 +17,7 @@ export async function writeAuditLog(input: {
   severity?: AuditSeverity;
   sensitive?: boolean;
 }, executor?: AuditExecutor) {
-  const target = executor ?? getPool();
+  const target: AuditExecutor = executor ?? getPool();
   await target.execute(
     `INSERT INTO audit_logs
       (id, workspace_id, event_id, actor_user_id, action_name, severity, is_sensitive, target_type, target_id, details_json)
