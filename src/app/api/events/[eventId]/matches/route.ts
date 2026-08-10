@@ -62,6 +62,7 @@ type SettingsRow = RowDataPacket & { no_show_minutes: number; confirmation_minut
 type ReportRow = RowDataPacket & { id: string; submitted_by: string; winner_entry_id: string; status: string };
 type TeamSnapshotRow = RowDataPacket & { team_id: string; roster_json: string | null };
 type EntryUsers = { a: Set<string>; b: Set<string> };
+type MatchOutcome = { action: string; label: string; participantUsers: string[]; message: string; webhook: boolean };
 
 class MatchConflict extends Error {}
 
@@ -266,6 +267,18 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
 
       const participantUsers = allParticipantUsers(entryUsers);
       const label = `${match.stage_label ?? `Round ${match.round_number}`} · Match ${match.match_number}`;
+      const audited = async (value: MatchOutcome): Promise<MatchOutcome> => {
+        await writeAuditLog({
+          actorUserId: session.userId,
+          workspaceId: access.event!.workspace_id,
+          eventId,
+          action: `match.${value.action.toLowerCase()}`,
+          targetType: "bracket_match",
+          targetId: match.id,
+          details: { reason: parsed.data.reason || null, winnerEntryId: parsed.data.winnerEntryId ?? null },
+        }, connection);
+        return value;
+      };
 
       if (action === "READY") {
         if (!playerEntryId) throw new MatchConflict("Only a linked match participant can mark ready.");
@@ -280,14 +293,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         const [readyRows] = await connection.query<(RowDataPacket & { ready_a_at: Date | null; ready_b_at: Date | null })[]>(`SELECT ready_a_at, ready_b_at FROM bracket_matches WHERE id = ? LIMIT 1`, [match.id]);
         const bothReady = Boolean(readyRows[0]?.ready_a_at && readyRows[0]?.ready_b_at);
         if (bothReady) await connection.execute(`UPDATE bracket_matches SET status = 'READY', updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [match.id]);
-        return { action, label, participantUsers, message: bothReady ? `${label} is ready to begin.` : `${label} received a ready check.`, webhook: bothReady };
+        return audited({ action, label, participantUsers, message: bothReady ? `${label} is ready to begin.` : `${label} received a ready check.`, webhook: bothReady });
       }
 
       if (action === "START") {
         if (!["PENDING", "READY"].includes(match.status)) throw new MatchConflict("This match cannot be started from its current state.");
         if (!access.manager && !(match.ready_a_at && match.ready_b_at)) throw new MatchConflict("Both sides must mark ready before starting the match.");
         await connection.execute(`UPDATE bracket_matches SET status = 'LIVE', started_at = COALESCE(started_at, CURRENT_TIMESTAMP(3)), no_show_deadline_at = NULL, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [match.id]);
-        return { action, label, participantUsers, message: `${label} is now live.`, webhook: true };
+        return audited({ action, label, participantUsers, message: `${label} is now live.`, webhook: true });
       }
 
       if (action === "SCHEDULE") {
@@ -297,7 +310,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         if (![1, 3, 5, 7, 9].includes(bestOf)) throw new MatchConflict("Best-of must be 1, 3, 5, 7, or 9.");
         const noShowDeadline = scheduledAt ? new Date(scheduledAt.getTime() + settings.no_show_minutes * 60_000) : null;
         await connection.execute(`UPDATE bracket_matches SET scheduled_at = ?, best_of = ?, no_show_deadline_at = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [scheduledAt, bestOf, noShowDeadline, match.id]);
-        return { action, label, participantUsers, message: scheduledAt ? `${label} was scheduled for ${scheduledAt.toISOString()}.` : `${label} schedule was cleared.`, webhook: Boolean(scheduledAt) };
+        return audited({ action, label, participantUsers, message: scheduledAt ? `${label} was scheduled for ${scheduledAt.toISOString()}.` : `${label} schedule was cleared.`, webhook: Boolean(scheduledAt) });
       }
 
       if (action === "REPORT") {
@@ -316,7 +329,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         );
         await connection.execute(`UPDATE bracket_matches SET status = 'AWAITING_CONFIRMATION', submitted_by = ?, submitted_at = CURRENT_TIMESTAMP(3), confirmation_due_at = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [session.userId, due, match.id]);
         const reporterSide = playerEntryId === match.participant_a_entry_id ? entryUsers.a : entryUsers.b;
-        return { action, label, participantUsers: participantUsers.filter((userId) => !reporterSide.has(userId)), message: `${label} has a result waiting for confirmation.`, webhook: false };
+        return audited({ action, label, participantUsers: participantUsers.filter((userId) => !reporterSide.has(userId)), message: `${label} has a result waiting for confirmation.`, webhook: false });
       }
 
       if (action === "CONFIRM") {
@@ -341,7 +354,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         );
         const [scoreRows] = await connection.query<(RowDataPacket & { score_a: number | null; score_b: number | null })[]>(`SELECT score_a, score_b FROM match_reports WHERE id = ? LIMIT 1`, [report.id]);
         await completeMatch({ connection, bracket, match, winnerEntryId: report.winner_entry_id, actorUserId: session.userId, reportId: report.id, finalStatus: "COMPLETED", scoreA: scoreRows[0]?.score_a, scoreB: scoreRows[0]?.score_b });
-        return { action, label, participantUsers, message: `${label} result was confirmed and the competition advanced.`, webhook: true };
+        return audited({ action, label, participantUsers, message: `${label} result was confirmed and the competition advanced.`, webhook: true });
       }
 
       if (action === "DISPUTE") {
@@ -359,7 +372,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         await connection.execute(`UPDATE match_reports SET status = 'DISPUTED', updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [report.id]);
         await connection.execute(`INSERT INTO match_disputes (id, match_id, report_id, opened_by, reason, proof_url) VALUES (?, ?, ?, ?, ?, ?)`, [randomUUID(), match.id, report.id, session.userId, parsed.data.reason, parsed.data.proofUrl || null]);
         await connection.execute(`UPDATE bracket_matches SET status = 'DISPUTED', updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [match.id]);
-        return { action, label, participantUsers, message: `${label} result was disputed and needs staff review.`, webhook: true };
+        return audited({ action, label, participantUsers, message: `${label} result was disputed and needs staff review.`, webhook: true });
       }
 
       if (action === "OVERRIDE" || action === "FORFEIT") {
@@ -379,7 +392,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
           [session.userId, parsed.data.reason, match.id],
         );
         await completeMatch({ connection, bracket, match, winnerEntryId, actorUserId: session.userId, reportId, finalStatus: action === "FORFEIT" ? "FORFEIT" : "COMPLETED", scoreA: parsed.data.scoreA, scoreB: parsed.data.scoreB, reason: parsed.data.reason });
-        return { action, label, participantUsers, message: action === "FORFEIT" ? `${label} was decided by forfeit/no-show.` : `${label} result was decided by tournament staff.`, webhook: true };
+        return audited({ action, label, participantUsers, message: action === "FORFEIT" ? `${label} was decided by forfeit/no-show.` : `${label} result was decided by tournament staff.`, webhook: true });
       }
 
       if (action === "RESET") {
@@ -398,21 +411,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
              confirmation_due_at = NULL, decided_by = NULL, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
           [match.id],
         );
-        return { action, label, participantUsers, message: `${label} was reopened for correction.`, webhook: true };
+        return audited({ action, label, participantUsers, message: `${label} was reopened for correction.`, webhook: true });
       }
 
       throw new MatchConflict("Unsupported match action.");
     });
 
-    await writeAuditLog({
-      actorUserId: session.userId,
-      workspaceId: access.event.workspace_id,
-      eventId,
-      action: `match.${outcome.action.toLowerCase()}`,
-      targetType: "bracket_match",
-      targetId: parsed.data.matchId,
-      details: { reason: parsed.data.reason || null, winnerEntryId: parsed.data.winnerEntryId ?? null },
-    });
     await notifyUsers(eventId, outcome.participantUsers.filter((userId) => userId !== session.userId), `${access.event.name} · match update`, outcome.message);
 
     if (outcome.webhook) {
