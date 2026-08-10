@@ -75,13 +75,13 @@ export async function getEventViewerAccess(userId: string | null, eventId: strin
   const participant = Boolean(participants[0]);
   const guildMember = Boolean(event.user_in_guild);
   const restrictedStatus = ["DRAFT", "AWAITING_APPROVAL"].includes(event.status);
-  const canView = restrictedStatus
-    ? manager
-    : event.visibility === "PUBLIC"
-      || event.visibility === "UNLISTED"
-      || (event.visibility === "SERVER" && guildMember)
-      || manager
-      || participant;
+
+  let canView = false;
+  if (restrictedStatus) canView = manager;
+  else if (event.visibility === "PUBLIC" || event.visibility === "UNLISTED") canView = true;
+  else if (event.visibility === "SERVER") canView = manager || participant || guildMember;
+  else if (event.visibility === "CODE_ONLY") canView = manager || participant;
+  else if (event.visibility === "STAFF_ONLY") canView = manager;
 
   return { event, manager, participant, guildMember, canView };
 }
