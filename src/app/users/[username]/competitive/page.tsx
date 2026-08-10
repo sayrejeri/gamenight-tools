@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { currentCompetitiveSeason, loadPlayerCompetitiveProfile, loadPlayerLeaderboard } from "@/lib/competitive-stats";
+import { currentCompetitiveSeason, loadPlayerCompetitiveProfile, loadPlayerRank } from "@/lib/competitive-stats";
 import { BrandMark } from "@/components/brand-mark";
 import { LocalDateTime } from "@/components/local-date-time";
 
@@ -50,13 +50,13 @@ export default async function CompetitiveProfilePage({ params }: { params: Promi
   }
 
   const season = currentCompetitiveSeason();
-  const [profile, allLeaderboard, seasonLeaderboard] = await Promise.all([
-    loadPlayerCompetitiveProfile(user.id),
-    loadPlayerLeaderboard(),
-    loadPlayerLeaderboard({ from: season.start, to: season.end }),
+  const viewerUserId = viewer?.userId ?? null;
+  const rankFilters = { viewerUserId, publicOnly: !viewerUserId };
+  const [profile, allRank, seasonRank] = await Promise.all([
+    loadPlayerCompetitiveProfile(user.id, viewerUserId),
+    loadPlayerRank(user.id, rankFilters),
+    loadPlayerRank(user.id, { ...rankFilters, from: season.start, to: season.end }),
   ]);
-  const allRankIndex = allLeaderboard.findIndex((row) => row.userId === user.id);
-  const seasonRankIndex = seasonLeaderboard.findIndex((row) => row.userId === user.id);
   const avatarUrl = getDiscordAvatarUrl(user.discord_id, user.avatar_hash);
   const displayName = user.global_name ?? user.username;
 
@@ -65,7 +65,7 @@ export default async function CompetitiveProfilePage({ params }: { params: Promi
       <header className="public-topbar"><BrandMark href="/" /><div className="button-row"><Link className="button button-secondary" href={`/users/${user.site_username}`}>Main profile</Link>{viewer ? <Link className="button" href="/dashboard/leaderboards">Leaderboards</Link> : <a className="button" href="/api/auth/discord/login">Sign in</a>}</div></header>
 
       <section className="competitive-profile-hero" style={user.banner_url ? { backgroundImage: `linear-gradient(100deg, rgba(9,11,18,.96), rgba(9,11,18,.68)), url(${user.banner_url})` } : undefined}>
-        <div className="profile-hero-user">{avatarUrl ? <img className="profile-avatar" src={avatarUrl} alt="" /> : <span className="profile-avatar avatar-fallback">{displayName.slice(0, 1).toUpperCase()}</span>}<div><span className="eyebrow">Competitive profile · @{user.site_username}</span><h1>{displayName}</h1><p>{profile.allTime.matches ? `${profile.allTime.matches} recorded competitive matches across ${profile.allTime.eventsPlayed} events.` : "No completed competitive matches have been recorded yet."}</p><div className="button-row">{allRankIndex >= 0 ? <span className="badge">All-time rank #{allRankIndex + 1}</span> : null}{seasonRankIndex >= 0 ? <span className="badge">{profile.seasonLabel} rank #{seasonRankIndex + 1}</span> : null}{profile.allTime.championships ? <span className="badge">🏆 {profile.allTime.championships} title{profile.allTime.championships === 1 ? "" : "s"}</span> : null}</div></div></div>
+        <div className="profile-hero-user">{avatarUrl ? <img className="profile-avatar" src={avatarUrl} alt="" /> : <span className="profile-avatar avatar-fallback">{displayName.slice(0, 1).toUpperCase()}</span>}<div><span className="eyebrow">Competitive profile · @{user.site_username}</span><h1>{displayName}</h1><p>{profile.allTime.matches ? `${profile.allTime.matches} recorded competitive matches across ${profile.allTime.eventsPlayed} events.` : "No completed competitive matches have been recorded yet."}</p><div className="button-row">{allRank != null ? <span className="badge">All-time rank #{allRank}</span> : null}{seasonRank != null ? <span className="badge">{profile.seasonLabel} rank #{seasonRank}</span> : null}{profile.allTime.championships ? <span className="badge">🏆 {profile.allTime.championships} title{profile.allTime.championships === 1 ? "" : "s"}</span> : null}</div></div></div>
       </section>
 
       <div className="competitive-profile-stat-grid">
@@ -76,7 +76,7 @@ export default async function CompetitiveProfilePage({ params }: { params: Promi
       </div>
 
       <div className="dashboard-grid">
-        <section className="panel section-stack"><div><span className="eyebrow">Current season</span><h2>{profile.seasonLabel}</h2><p className="muted">Quarterly seasonal stats reset on the leaderboard without erasing career history.</p></div><div className="competitive-season-record"><strong>{profile.season.wins}–{profile.season.losses}</strong><span>{profile.season.winRate}% win rate · {profile.season.championships} titles · {profile.season.eventsPlayed} events</span></div>{seasonRankIndex >= 0 ? <Link className="button button-secondary" href="/dashboard/leaderboards?scope=season">View season leaderboard</Link> : null}</section>
+        <section className="panel section-stack"><div><span className="eyebrow">Current season</span><h2>{profile.seasonLabel}</h2><p className="muted">Quarterly seasonal stats reset on the leaderboard without erasing career history.</p></div><div className="competitive-season-record"><strong>{profile.season.wins}–{profile.season.losses}</strong><span>{profile.season.winRate}% win rate · {profile.season.championships} titles · {profile.season.eventsPlayed} events</span></div>{seasonRank != null ? <Link className="button button-secondary" href="/dashboard/leaderboards?scope=season">View season leaderboard</Link> : null}</section>
         <section className="panel section-stack"><div><span className="eyebrow">Highlights</span><h2>Competitive badges</h2><p className="muted">Badges are earned automatically from verified tournament history.</p></div>{profile.badges.length ? <div className="competitive-badge-grid">{profile.badges.map((badge) => <div className="competitive-badge" key={badge.key}><span>{badge.icon}</span><div><strong>{badge.name}</strong><small>{badge.description}</small></div></div>)}</div> : <div className="empty-state">Competitive badges will appear as this player builds tournament history.</div>}</section>
       </div>
 
