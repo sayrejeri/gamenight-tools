@@ -1,0 +1,81 @@
+import Link from "next/link";
+import type { RowDataPacket } from "mysql2";
+import { getDiscordAvatarUrl, requireSession } from "@/lib/auth";
+import { query } from "@/lib/db";
+import { currentCompetitiveSeason, loadPlayerLeaderboard, loadTeamLeaderboard, type CompetitiveFilters } from "@/lib/competitive-stats";
+
+type WorkspaceRow = RowDataPacket & { id: string; name: string };
+type GameRow = RowDataPacket & { game_name: string };
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+function one(value: string | string[] | undefined): string { return Array.isArray(value) ? value[0] ?? "" : value ?? ""; }
+
+export default async function LeaderboardsPage({ searchParams }: { searchParams: SearchParams }) {
+  const session = await requireSession();
+  const params = await searchParams;
+  const mode = one(params.mode) === "teams" ? "teams" : "players";
+  const scope = one(params.scope) === "season" ? "season" : "all";
+  const workspaceId = one(params.workspace) || null;
+  const game = one(params.game) || null;
+  const season = currentCompetitiveSeason();
+  const filters: CompetitiveFilters = {
+    workspaceId,
+    game,
+    from: scope === "season" ? season.start : null,
+    to: scope === "season" ? season.end : null,
+  };
+
+  const [workspaces, games, playerRows, teamRows] = await Promise.all([
+    query<WorkspaceRow[]>(
+      `SELECT DISTINCT w.id, w.name FROM workspaces w
+       INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id
+       WHERE ug.user_id = ? AND w.profile_status = 'APPROVED' ORDER BY w.name`,
+      [session.userId],
+    ),
+    query<GameRow[]>(
+      `SELECT DISTINCT COALESCE(e.subgame_name, e.game_name, e.platform_name, 'Game Night') AS game_name
+       FROM bracket_matches bm INNER JOIN brackets br ON br.id = bm.bracket_id INNER JOIN events e ON e.id = br.event_id
+       WHERE bm.status IN ('COMPLETED', 'FORFEIT') ORDER BY game_name`,
+    ),
+    mode === "players" ? loadPlayerLeaderboard(filters) : Promise.resolve([]),
+    mode === "teams" ? loadTeamLeaderboard(filters) : Promise.resolve([]),
+  ]);
+
+  const totalCompetitors = mode === "players" ? playerRows.length : teamRows.length;
+  const totalMatches = mode === "players" ? playerRows.reduce((sum, row) => sum + row.matches, 0) / 2 : teamRows.reduce((sum, row) => sum + row.matches, 0) / 2;
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? null;
+  const scopeLabel = scope === "season" ? season.label : "All time";
+
+  return (
+    <div className="section-stack competitive-leaderboard-page">
+      <section className="page-heading">
+        <div><span className="eyebrow">Competitive hub</span><h1>Leaderboards</h1><p>Compare tournament records across seasons, servers, games, players, and approved teams.</p></div>
+        <div className="button-row"><Link className={`button ${mode === "players" ? "" : "button-secondary"}`} href={`/dashboard/leaderboards?mode=players&scope=${scope}`}>Players</Link><Link className={`button ${mode === "teams" ? "" : "button-secondary"}`} href={`/dashboard/leaderboards?mode=teams&scope=${scope}`}>Teams</Link></div>
+      </section>
+
+      <section className="competitive-filter-panel panel section-stack">
+        <form className="competitive-filter-grid" method="get">
+          <input type="hidden" name="mode" value={mode} />
+          <label><span>Time period</span><select name="scope" defaultValue={scope}><option value="all">All time</option><option value="season">{season.label}</option></select></label>
+          <label><span>Server</span><select name="workspace" defaultValue={workspaceId ?? ""}><option value="">All available servers</option>{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select></label>
+          <label><span>Game</span><select name="game" defaultValue={game ?? ""}><option value="">All games</option>{games.map((item) => <option value={item.game_name} key={item.game_name}>{item.game_name}</option>)}</select></label>
+          <button className="button" type="submit">Apply filters</button>
+        </form>
+        <div className="button-row"><span className="badge">{scopeLabel}</span>{selectedWorkspace ? <span className="badge">{selectedWorkspace}</span> : null}{game ? <span className="badge">{game}</span> : null}</div>
+      </section>
+
+      <div className="tournament-stat-grid competitive-summary-grid"><div className="stat-card"><span>{mode === "players" ? "Ranked players" : "Ranked teams"}</span><strong>{totalCompetitors}</strong></div><div className="stat-card"><span>Recorded matches</span><strong>{Math.floor(totalMatches)}</strong></div><div className="stat-card"><span>Leaderboard scope</span><strong>{scope === "season" ? "Season" : "Career"}</strong></div><div className="stat-card"><span>Top priority</span><strong>🏆 Titles</strong></div></div>
+
+      {mode === "players" ? (
+        playerRows.length ? <section className="panel leaderboard-table-shell"><div className="leaderboard-table"><div className="leaderboard-row leaderboard-head"><span>Rank</span><span>Player</span><span>Record</span><span>Win rate</span><span>Titles</span><span>Best streak</span><span>Events</span></div>{playerRows.map((row, index) => {
+          const avatar = getDiscordAvatarUrl(row.discordId, row.avatarHash);
+          return <Link className={`leaderboard-row ${index < 3 ? "leaderboard-podium" : ""}`} href={`/users/${row.siteUsername}/competitive`} key={row.userId}><span className="leaderboard-rank">{index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index + 1}`}</span><span className="leaderboard-identity">{avatar ? <img src={avatar} alt="" /> : <span className="leaderboard-avatar-fallback">{row.displayName.slice(0, 1).toUpperCase()}</span>}<span><strong>{row.displayName}</strong><small>@{row.siteUsername}</small></span></span><span><strong>{row.wins}–{row.losses}</strong><small>{row.matches} matches</small></span><span><strong>{row.winRate}%</strong></span><span><strong>{row.championships}</strong></span><span><strong>{row.bestWinStreak ? `W${row.bestWinStreak}` : "—"}</strong><small>{row.currentStreakType ? `Now ${row.currentStreakType}${row.currentStreak}` : "No streak"}</small></span><span><strong>{row.eventsPlayed}</strong></span></Link>;
+        })}</div></section> : <div className="empty-state">No player match results exist for these filters yet.</div>
+      ) : (
+        teamRows.length ? <section className="panel leaderboard-table-shell"><div className="leaderboard-table"><div className="leaderboard-row leaderboard-head"><span>Rank</span><span>Team</span><span>Record</span><span>Win rate</span><span>Titles</span><span>Best streak</span><span>Events</span></div>{teamRows.map((row, index) => <Link className={`leaderboard-row ${index < 3 ? "leaderboard-podium" : ""}`} href={`/teams/${row.slug}`} key={row.teamId}><span className="leaderboard-rank">{index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index + 1}`}</span><span className="leaderboard-identity">{row.logoUrl ? <img src={row.logoUrl} alt="" /> : <span className="leaderboard-avatar-fallback">{(row.tag ?? row.name).slice(0, 2).toUpperCase()}</span>}<span><strong>{row.name}</strong><small>{row.tag ? `[${row.tag}]` : "Approved team"}</small></span></span><span><strong>{row.wins}–{row.losses}</strong><small>{row.matches} matches</small></span><span><strong>{row.winRate}%</strong></span><span><strong>{row.championships}</strong></span><span><strong>{row.bestWinStreak ? `W${row.bestWinStreak}` : "—"}</strong><small>{row.currentStreakType ? `Now ${row.currentStreakType}${row.currentStreak}` : "No streak"}</small></span><span><strong>{row.eventsPlayed}</strong></span></Link>)}</div></section> : <div className="empty-state">No team match results exist for these filters yet.</div>
+      )}
+
+      <div className="rule-callout"><strong>How ranking works</strong><p>Completed head-to-head matches and staff-decided forfeits count. Automatic byes do not count as wins. Rankings prioritize championships, then wins, win rate, fewer losses, and match volume. Private competitive histories are excluded from player leaderboards.</p></div>
+    </div>
+  );
+}
