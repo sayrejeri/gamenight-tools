@@ -104,11 +104,8 @@ function bracketSideForStage(stage: CompetitionStage): NormalizedMatchInput["bra
 }
 
 async function resetMatchWorkflow(connection: PoolConnection, matchId: string, destructive: boolean): Promise<void> {
-  if (destructive) {
-    await connection.execute(`DELETE FROM match_disputes WHERE match_id = ?`, [matchId]);
-    await connection.execute(`DELETE FROM match_reports WHERE match_id = ?`, [matchId]);
-    return;
-  }
+  // Never erase submitted score/proof/dispute evidence during correction. Even a
+  // participant-changing reset retains the history and marks it as invalidated.
   await connection.execute(
     `UPDATE match_reports SET status = 'VOID', updated_at = CURRENT_TIMESTAMP(3)
      WHERE match_id = ? AND status <> 'VOID'`,
@@ -117,10 +114,14 @@ async function resetMatchWorkflow(connection: PoolConnection, matchId: string, d
   await connection.execute(
     `UPDATE match_disputes
      SET status = 'RESOLVED', resolution_action = 'VOID_REPORT',
-         resolution_note = 'Competition result changed before or through tournament correction.',
-         resolved_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
+         resolution_note = ?, resolved_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
      WHERE match_id = ? AND status = 'OPEN'`,
-    [matchId],
+    [
+      destructive
+        ? "Match participants changed because an upstream competition result was corrected; the prior report was voided and retained for audit history."
+        : "Competition result changed before or through tournament correction; the prior report was voided and retained for audit history.",
+      matchId,
+    ],
   );
 }
 
@@ -242,9 +243,12 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
   for (const [index, participant] of draft.participants.entries()) {
     const userId = linkedUserId(participant);
     const teamId = linkedTeamId(participant);
-    let existing = byParticipantKey.get(participant.id)
-      ?? (userId ? byUserId.get(userId) : undefined)
-      ?? (teamId ? byTeamId.get(teamId) : undefined);
+    const candidates = [
+      byParticipantKey.get(participant.id),
+      userId ? byUserId.get(userId) : undefined,
+      teamId ? byTeamId.get(teamId) : undefined,
+    ];
+    let existing = candidates.find((candidate) => candidate && !usedEntryIds.has(candidate.id));
     if (!existing) existing = existingEntries.find((entry) => !usedEntryIds.has(entry.id) && entry.display_name === participant.name);
 
     const entryId = existing?.id ?? randomUUID();
@@ -280,7 +284,13 @@ export async function syncBracketRecords(connection: PoolConnection, bracketId: 
 
   for (const input of normalizedMatches) {
     const positionKey = `${input.globalRoundNumber}:${input.matchNumber}`;
-    const existing = existingMatchBySource.get(input.sourceMatchId) ?? existingMatchByPosition.get(positionKey);
+    const sourceCandidate = existingMatchBySource.get(input.sourceMatchId);
+    const positionCandidate = existingMatchByPosition.get(positionKey);
+    const existing = sourceCandidate && !usedMatchIds.has(sourceCandidate.id)
+      ? sourceCandidate
+      : positionCandidate && !usedMatchIds.has(positionCandidate.id)
+        ? positionCandidate
+        : undefined;
     const matchId = existing?.id ?? randomUUID();
     usedMatchIds.add(matchId);
 
