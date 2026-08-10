@@ -53,23 +53,27 @@
 - Host-generated anonymous spectator links that expose only live/completed public competition state
 - Existing single-elimination and custom three-player formats remain supported by the same Match Center workflow
 
-## Next — v0.8 Game Night Tools & Series
+## v0.8 — Game Night Tools & Series
 
-- Structured per-game/map series breakdowns and map-by-map reporting
-- Saved game/map pools and random selection without repeats
-- Scoreboards and score overlays
-- Game, round, and countdown timers
-- Player picker and team generator
-- Game/map picker for casual nights and tournament series
-- Better host live-event control screen
+- Game Night Studio with a live scoreboard and presentation mode
+- Countdown and stopwatch controls with fast round presets
+- Player picker with no-repeat cycles and random team generation
+- Persistent saved game/map/mixed pools with optional item details
+- Random saved-pool selection without repeats until the cycle is exhausted
+- Structured best-of series reporting with game-by-game map/mode, winner, and optional per-game scores
+- Saved pools can seed randomized opening maps directly inside tournament series reporting
+- Series results use the existing opponent-confirmation, dispute, and bracket-advancement workflow
+- Event Control Room combines live match attention, scoreboard, timer, and saved-pool picking for tournament staff
+- Competition pages link staff into the Control Room and participants into the Series Desk
 
-## Later — Competitive Profiles & Leaderboards
+## Next — v0.9 Competitive Profiles & Leaderboards
 
 - Dedicated competitive profile pages
 - Seasonal, server, game, and all-time leaderboards
 - Full tournament history, placements, championships, and best streaks
 - Server leaderboards and game-specific statistics
 - Attendance and no-show history
+- Competitive badges and profile highlights
 
 ## Later — Optional Discord bot
 
