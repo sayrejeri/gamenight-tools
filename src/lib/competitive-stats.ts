@@ -143,7 +143,7 @@ type AttendanceRow = RowDataPacket & { status: string; checked_in_at: Date | nul
 type CountRow = RowDataPacket & { total: number };
 type GameRow = RowDataPacket & { game_name: string };
 type BlockRow = RowDataPacket & { blocker_user_id: string; blocked_user_id: string };
-type RankSummaryRow = RowDataPacket & { user_id: string; wins: number; losses: number; matches: number };
+type RankSummaryRow = RowDataPacket & { user_id: string; display_name: string; wins: number; losses: number; matches: number };
 
 type Outcome = { won: boolean; at: Date; eventId: string };
 
@@ -422,12 +422,13 @@ export async function loadCompetitiveGames(filters: CompetitiveFilters = {}): Pr
   return rows.map((row) => row.game_name);
 }
 
-async function loadPlayerRankSummaries(filters: CompetitiveFilters = {}): Promise<Array<{ userId: string; wins: number; losses: number; matches: number; championships: number; winRate: number }>> {
+async function loadPlayerRankSummaries(filters: CompetitiveFilters = {}): Promise<Array<{ userId: string; displayName: string; wins: number; losses: number; matches: number; championships: number; winRate: number }>> {
   const scopeA = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
   const scopeB = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
   const publicOnly = Boolean(filters.publicOnly || !filters.viewerUserId);
   const rows = await query<RankSummaryRow[]>(
-    `SELECT s.user_id, SUM(s.won) AS wins, COUNT(*) - SUM(s.won) AS losses, COUNT(*) AS matches
+    `SELECT s.user_id, MAX(COALESCE(u.global_name, u.username, u.site_username)) AS display_name,
+            SUM(s.won) AS wins, COUNT(*) - SUM(s.won) AS losses, COUNT(*) AS matches
      FROM (
        SELECT CAST(a.user_id AS CHAR) AS user_id, CASE WHEN win.user_id = a.user_id THEN 1 ELSE 0 END AS won
        FROM bracket_matches bm
@@ -464,8 +465,8 @@ async function loadPlayerRankSummaries(filters: CompetitiveFilters = {}): Promis
   return rows.filter((row) => !blocked.has(row.user_id)).map((row) => {
     const wins = Number(row.wins ?? 0);
     const losses = Number(row.losses ?? 0);
-    return { userId: row.user_id, wins, losses, matches: Number(row.matches ?? 0), championships: championshipMap.get(row.user_id) ?? 0, winRate: rate(wins, losses) };
-  }).sort((a, b) => b.championships - a.championships || b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.matches - a.matches || a.userId.localeCompare(b.userId));
+    return { userId: row.user_id, displayName: row.display_name, wins, losses, matches: Number(row.matches ?? 0), championships: championshipMap.get(row.user_id) ?? 0, winRate: rate(wins, losses) };
+  }).sort((a, b) => b.championships - a.championships || b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.matches - a.matches || a.displayName.localeCompare(b.displayName));
 }
 
 export async function loadPlayerRank(userId: string, filters: CompetitiveFilters = {}): Promise<number | null> {
