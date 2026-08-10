@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
+import { getEventViewerAccess } from "@/lib/event-view-access";
 
 const requestSchema = z.object({
   action: z.enum(["SIGN_UP", "CHECK_IN", "WITHDRAW"]).default("SIGN_UP"),
@@ -124,6 +125,17 @@ export async function POST(
       );
     });
     return NextResponse.json({ status: existingParticipant.status, checkedIn: true });
+  }
+
+  const eventAccess = await getEventViewerAccess(session.userId, eventId);
+  if (!eventAccess.event || !eventAccess.canView) {
+    return NextResponse.json({ error: "You do not have access to sign up for this event." }, { status: 403 });
+  }
+  if (eventAccess.event.visibility === "STAFF_ONLY" && !eventAccess.manager) {
+    return NextResponse.json({ error: "This event is limited to authorized event staff." }, { status: 403 });
+  }
+  if (eventAccess.event.visibility === "CODE_ONLY" && !eventAccess.participant && !eventAccess.manager) {
+    return NextResponse.json({ error: "Redeem the event join code before signing up." }, { status: 403 });
   }
 
   if (event.status !== "SIGNUPS_OPEN") {
