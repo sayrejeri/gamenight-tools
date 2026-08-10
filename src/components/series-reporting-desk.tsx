@@ -107,7 +107,7 @@ function SeriesMatchCard({ match, pools, canManage, busy, onSubmit }: { match: S
   }
   function fillFromPool() {
     if (!selectedPool?.items.length) return;
-    const choices = shuffle(selectedPool.items).slice(0, match.bestOf);
+    const choices = shuffle(selectedPool.items).slice(0, needed);
     setGames(choices.map((item, index) => ({ ...emptyGame(index + 1, match.a.entryId), mapName: item.label, modeName: item.details ?? "" })));
   }
   function submit(event: FormEvent) {
@@ -123,7 +123,7 @@ function SeriesMatchCard({ match, pools, canManage, busy, onSubmit }: { match: S
 
       {match.status === "LIVE" && mine ? <form className="section-stack series-entry-form" onSubmit={submit}>
         <div className="series-score-preview"><div><span>{match.a.name}</span><strong>{wins.a}</strong></div><span>First to {needed}</span><div><span>{match.b.name}</span><strong>{wins.b}</strong></div></div>
-        {pools.length ? <div className="series-pool-row"><label className="form-stack compact"><span>Optional saved map/game pool</span><select value={poolId} onChange={(event) => setPoolId(event.target.value)}><option value="">Choose a pool</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select></label><button className="button button-secondary" type="button" disabled={!selectedPool} onClick={fillFromPool}>Randomize series from pool</button></div> : null}
+        {pools.length ? <div className="series-pool-row"><label className="form-stack compact"><span>Optional saved map/game pool</span><select value={poolId} onChange={(event) => setPoolId(event.target.value)}><option value="">Choose a pool</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select></label><button className="button button-secondary" type="button" disabled={!selectedPool} onClick={fillFromPool}>Randomize opening maps</button></div> : null}
         <div className="series-game-list">{games.map((game, index) => <div className="series-game-row" key={game.gameNumber}>
           <strong>Game {game.gameNumber}</strong>
           <input value={game.mapName} onChange={(event) => updateGame(index, { mapName: event.target.value })} placeholder="Map / game" maxLength={191} required />
