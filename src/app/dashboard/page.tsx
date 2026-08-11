@@ -87,13 +87,35 @@ export default async function DashboardPage() {
             e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL')
             AND (
               e.visibility = 'PUBLIC'
-              OR (e.visibility = 'SERVER' AND (ug.user_id IS NOT NULL OR ep.user_id IS NOT NULL))
-              OR (e.visibility = 'CODE_ONLY' AND ep.user_id IS NOT NULL)
-              OR (e.visibility = 'UNLISTED' AND ep.user_id IS NOT NULL)
+              OR (e.visibility = 'SERVER' AND (
+                ug.user_id IS NOT NULL
+                OR ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
+              OR (e.visibility = 'CODE_ONLY' AND (
+                ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
+              OR (e.visibility = 'UNLISTED' AND (
+                ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
             )
           )
        ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC LIMIT 60`,
-      [session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds],
+      [session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds, session.userId, session.userId, session.userId],
     ),
     query<InvitationRow[]>(
       `SELECT ec.id, e.name AS event_name, w.name AS workspace_name, ec.permission_level
