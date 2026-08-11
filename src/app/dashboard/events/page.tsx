@@ -37,14 +37,36 @@ export default async function EventsPage() {
           e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL')
           AND (
             e.visibility = 'PUBLIC'
-            OR (e.visibility = 'SERVER' AND (ug.user_id IS NOT NULL OR ep.user_id IS NOT NULL))
-            OR (e.visibility = 'CODE_ONLY' AND ep.user_id IS NOT NULL)
-            OR (e.visibility = 'UNLISTED' AND ep.user_id IS NOT NULL)
+            OR (e.visibility = 'SERVER' AND (
+              ug.user_id IS NOT NULL
+              OR ep.user_id IS NOT NULL
+              OR EXISTS(
+                SELECT 1 FROM event_team_entries ete
+                WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                  AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+              )
+            ))
+            OR (e.visibility = 'CODE_ONLY' AND (
+              ep.user_id IS NOT NULL
+              OR EXISTS(
+                SELECT 1 FROM event_team_entries ete
+                WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                  AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+              )
+            ))
+            OR (e.visibility = 'UNLISTED' AND (
+              ep.user_id IS NOT NULL
+              OR EXISTS(
+                SELECT 1 FROM event_team_entries ete
+                WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                  AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+              )
+            ))
           )
         )
      ORDER BY FIELD(e.status, 'LIVE', 'CHECK_IN_OPEN', 'SIGNUPS_OPEN', 'SIGNUPS_CLOSED', 'AWAITING_APPROVAL', 'DRAFT', 'POSTPONED', 'COMPLETED', 'CANCELLED'), COALESCE(e.starts_at, '9999-12-31') ASC
      LIMIT 100`,
-    [session.userId, session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds],
+    [session.userId, session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds, session.userId, session.userId, session.userId],
   );
   return <div className="section-stack"><section className="page-heading"><div><span className="eyebrow">Your schedule</span><h1>Events</h1><p>Events you host, manage, joined, or can access through an approved server profile.</p></div></section><section className="panel section-stack"><div className="event-grid">{events.length ? events.map((event) => <Link className="event-card event-card-media" href={`/dashboard/events/${event.id}`} key={event.id}>{event.game_thumbnail_url ? <img src={event.game_thumbnail_url} alt="" /> : <div className="event-image-fallback">{(event.subgame_name ?? event.game_name ?? event.platform_name ?? "GN").slice(0, 2)}</div>}<div><span className="card-kicker">{event.workspace_name} · {event.relationship}</span><h3>{event.name}</h3><p>{event.subgame_name ?? event.game_name ?? event.platform_name ?? "Game not selected"}</p><p><LocalDateTime value={event.starts_at ? new Date(event.starts_at).toISOString() : null} fallbackTimeZone={event.timezone} includeRelative /></p><span className="badge">{event.status.replaceAll("_", " ")}</span><span className="badge">{event.participant_count} participants</span></div></Link>) : <div className="empty-state">No events are available yet.</div>}</div></section></div>;
 }
