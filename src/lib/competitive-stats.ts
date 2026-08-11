@@ -14,8 +14,13 @@ export type CompetitiveFilters = {
   publicOnly?: boolean;
   /** Limit match/champion reads to one linked player. */
   subjectUserId?: string | null;
+  /** Workspaces where the viewer has effective event-management permissions. */
+  managerWorkspaceIds?: string[] | null;
+  /** Platform-level event management across every workspace. */
+  managerAllWorkspaces?: boolean;
 };
 
+export type CompetitiveManagerScope = { allWorkspaces: boolean; workspaceIds: string[] };
 export type SeasonWindow = { label: string; start: Date; end: Date };
 
 export type PlayerLeaderboardEntry = {
@@ -146,7 +151,6 @@ type BlockRow = RowDataPacket & { blocker_user_id: string; blocked_user_id: stri
 type RankSummaryRow = RowDataPacket & { user_id: string; display_name: string; wins: number; losses: number; matches: number };
 
 type Outcome = { won: boolean; at: Date; eventId: string };
-
 type SqlScope = { sql: string; values: unknown[] };
 
 export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
@@ -159,8 +163,8 @@ export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
 
 function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alias = "e"): SqlScope {
   // A postponed tournament contributes competitive history only if it previously
-  // entered LIVE through the audited event lifecycle. This keeps legitimate
-  // paused tournament results visible without exposing pre-live/test winners.
+  // entered LIVE through the audited event lifecycle. START now writes that audit
+  // marker inside the same transaction as the status transition.
   const clauses: string[] = [`(
     ${alias}.status IN ('LIVE', 'COMPLETED')
     OR (
@@ -190,8 +194,15 @@ function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alia
   if (filters.publicOnly || !viewerUserId) {
     clauses.push(`${alias}.visibility = 'PUBLIC'`);
   } else {
+    const managerWorkspaceIds = filters.managerWorkspaceIds ?? [];
+    const managerWorkspaceSql = filters.managerAllWorkspaces
+      ? "1 = 1"
+      : managerWorkspaceIds.length
+        ? `${alias}.workspace_id IN (${managerWorkspaceIds.map(() => "?").join(",")})`
+        : "1 = 0";
     clauses.push(`(
-      ${alias}.visibility = 'PUBLIC'
+      (${managerWorkspaceSql})
+      OR ${alias}.visibility = 'PUBLIC'
       OR (${alias}.visibility = 'SERVER' AND (
         EXISTS(
           SELECT 1 FROM user_guilds cug
@@ -222,7 +233,7 @@ function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alia
         OR EXISTS(SELECT 1 FROM event_cohosts sec WHERE sec.event_id = ${alias}.id AND sec.invited_user_id = ? AND sec.status = 'ACCEPTED')
       ))
     )`);
-    values.push(...Array(11).fill(viewerUserId));
+    values.push(...managerWorkspaceIds, ...Array(11).fill(viewerUserId));
   }
 
   return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", values };
@@ -519,10 +530,11 @@ function snapshotForUser(rows: MatchRow[], championshipCount: number, userId: st
   return { wins, losses, matches: wins + losses, eventsPlayed: events.size, championships: championshipCount, winRate: rate(wins, losses), ...streaks };
 }
 
-export async function loadPlayerCompetitiveProfile(userId: string, viewerUserId: string | null = null): Promise<PlayerCompetitiveProfile> {
+export async function loadPlayerCompetitiveProfile(userId: string, viewerUserId: string | null = null, managerScope: CompetitiveManagerScope = { allWorkspaces: false, workspaceIds: [] }): Promise<PlayerCompetitiveProfile> {
   const season = currentCompetitiveSeason();
-  const baseFilters: CompetitiveFilters = { viewerUserId, publicOnly: !viewerUserId, subjectUserId: userId };
-  const attendanceScope = eventScopeSql({ viewerUserId, publicOnly: !viewerUserId }, "COALESCE(e.starts_at, e.created_at)");
+  const managerFilters = { managerAllWorkspaces: managerScope.allWorkspaces, managerWorkspaceIds: managerScope.workspaceIds };
+  const baseFilters: CompetitiveFilters = { viewerUserId, publicOnly: !viewerUserId, subjectUserId: userId, ...managerFilters };
+  const attendanceScope = eventScopeSql({ viewerUserId, publicOnly: !viewerUserId, ...managerFilters }, "COALESCE(e.starts_at, e.created_at)");
   const [allRows, championRows, attendanceRows] = await Promise.all([
     loadMatchRows(baseFilters),
     loadChampionRows(baseFilters),
