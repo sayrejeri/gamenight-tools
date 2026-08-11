@@ -123,6 +123,12 @@
 .event-hero p,
 .workspace-hero p { color: var(--muted); }
 
+.event-hero-content > p,
+.spectator-hero > div > p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .workspace-hero {
   min-height: auto;
   padding: 30px;
