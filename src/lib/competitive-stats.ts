@@ -158,7 +158,11 @@ export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
 }
 
 function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alias = "e"): SqlScope {
-  const clauses: string[] = [`${alias}.status IN ('LIVE', 'COMPLETED')`];
+  // POSTPONED can represent a tournament that was already live. Completed/forfeit
+  // match rows remain authoritative while the event is paused, while pre-live
+  // postponed events still contribute no competitive rows because they have no
+  // decided matches/championship state to select.
+  const clauses: string[] = [`${alias}.status IN ('LIVE', 'POSTPONED', 'COMPLETED')`];
   const values: unknown[] = [];
 
   if (filters.workspaceIds !== undefined && filters.workspaceIds !== null) {
@@ -188,18 +192,28 @@ function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alia
         OR ${alias}.primary_host_id = ?
         OR EXISTS(SELECT 1 FROM event_cohosts svc WHERE svc.event_id = ${alias}.id AND svc.invited_user_id = ? AND svc.status = 'ACCEPTED')
         OR EXISTS(SELECT 1 FROM event_participants svp WHERE svp.event_id = ${alias}.id AND svp.user_id = ? AND svp.status NOT IN ('REJECTED', 'WITHDRAWN'))
+        OR EXISTS(
+          SELECT 1 FROM event_team_entries svt
+          WHERE svt.event_id = ${alias}.id AND svt.status = 'REGISTERED'
+            AND JSON_SEARCH(svt.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+        )
       ))
       OR (${alias}.visibility IN ('UNLISTED', 'CODE_ONLY') AND (
         ${alias}.primary_host_id = ?
         OR EXISTS(SELECT 1 FROM event_cohosts cec WHERE cec.event_id = ${alias}.id AND cec.invited_user_id = ? AND cec.status = 'ACCEPTED')
         OR EXISTS(SELECT 1 FROM event_participants cep WHERE cep.event_id = ${alias}.id AND cep.user_id = ? AND cep.status NOT IN ('REJECTED', 'WITHDRAWN'))
+        OR EXISTS(
+          SELECT 1 FROM event_team_entries cet
+          WHERE cet.event_id = ${alias}.id AND cet.status = 'REGISTERED'
+            AND JSON_SEARCH(cet.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+        )
       ))
       OR (${alias}.visibility = 'STAFF_ONLY' AND (
         ${alias}.primary_host_id = ?
         OR EXISTS(SELECT 1 FROM event_cohosts sec WHERE sec.event_id = ${alias}.id AND sec.invited_user_id = ? AND sec.status = 'ACCEPTED')
       ))
     )`);
-    values.push(...Array(9).fill(viewerUserId));
+    values.push(...Array(11).fill(viewerUserId));
   }
 
   return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", values };
