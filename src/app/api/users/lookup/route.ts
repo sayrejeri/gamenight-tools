@@ -16,23 +16,30 @@ export async function GET(request: NextRequest) {
   const q = request.nextUrl.searchParams.get("q")?.trim().replace(/^@/, "") ?? "";
   if (q.length < 2) return NextResponse.json({ users: [] });
 
-  const like = `%${q}%`;
+  // LOCATE treats %, _ and backslashes as literal text, unlike LIKE wildcard
+  // patterns. Keep this generic lookup aligned with profile discovery privacy.
   const rows = await query<UserLookupRow[]>(
-    `SELECT site_username, username, global_name
-     FROM users
-     WHERE site_username LIKE ?
-        OR username LIKE ?
-        OR global_name LIKE ?
+    `SELECT u.site_username, u.username, u.global_name
+     FROM users u
+     LEFT JOIN user_preferences up ON up.user_id = u.id
+     WHERE u.account_status = 'ACTIVE'
+       AND u.profile_visibility <> 'PRIVATE'
+       AND COALESCE(up.discoverable, 1) = 1
+       AND (
+         LOCATE(LOWER(?), LOWER(COALESCE(u.site_username, ''))) > 0
+         OR LOCATE(LOWER(?), LOWER(u.username)) > 0
+         OR LOCATE(LOWER(?), LOWER(COALESCE(u.global_name, ''))) > 0
+       )
      ORDER BY
        CASE
-         WHEN LOWER(site_username) = LOWER(?) THEN 0
-         WHEN LOWER(username) = LOWER(?) THEN 1
-         WHEN LOWER(global_name) = LOWER(?) THEN 2
+         WHEN LOWER(u.site_username) = LOWER(?) THEN 0
+         WHEN LOWER(u.username) = LOWER(?) THEN 1
+         WHEN LOWER(u.global_name) = LOWER(?) THEN 2
          ELSE 3
        END,
-       COALESCE(global_name, username) ASC
+       COALESCE(u.global_name, u.username) ASC
      LIMIT 8`,
-    [like, like, like, q, q, q],
+    [q, q, q, q, q, q],
   );
 
   return NextResponse.json({

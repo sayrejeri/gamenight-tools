@@ -37,17 +37,32 @@ type UserRow = RowDataPacket & { id: string; discord_id: string; display_name: s
 type MemberRow = RowDataPacket & { role: string; status: string; discord_id: string; display_label: string | null; permissions_json: string | null };
 type WorkspaceRow = RowDataPacket & { name: string };
 type CountRow = RowDataPacket & { total: number };
+type UserResolution = { user: UserRow | null; ambiguous: boolean };
 
-async function resolveUser(identifier: string): Promise<UserRow | null> {
-  const clean = identifier.replace(/^@/, "");
+async function resolveUser(identifier: string): Promise<UserResolution> {
+  const raw = identifier.trim();
+  const clean = raw.replace(/^@/, "");
+
+  // Numeric Discord IDs are authoritative and must never collide with an
+  // unrelated numeric site username.
+  if (/^\d{15,32}$/.test(raw)) {
+    const rows = await query<UserRow[]>(
+      `SELECT CAST(id AS CHAR) AS id, discord_id, COALESCE(site_username, global_name, username) AS display_name
+       FROM users WHERE discord_id = ? LIMIT 2`,
+      [raw],
+    );
+    return { user: rows[0] ?? null, ambiguous: rows.length > 1 };
+  }
+
   const rows = await query<UserRow[]>(
     `SELECT CAST(id AS CHAR) AS id, discord_id, COALESCE(site_username, global_name, username) AS display_name
      FROM users
-     WHERE LOWER(site_username) = LOWER(?) OR LOWER(username) = LOWER(?) OR discord_id = ?
-     LIMIT 1`,
-    [clean, clean, identifier],
+     WHERE LOWER(site_username) = LOWER(?) OR LOWER(username) = LOWER(?)
+     LIMIT 3`,
+    [clean, clean],
   );
-  return rows[0] ?? null;
+  const unique = [...new Map(rows.map((row) => [row.id, row])).values()];
+  return { user: unique.length === 1 ? unique[0] : null, ambiguous: unique.length > 1 };
 }
 
 async function getWorkspaceName(workspaceId: string): Promise<string | null> {
@@ -103,7 +118,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ wo
   const permissionError = await validateActorCanSet(session.userId, workspaceId, parsed.data.role, selected, Boolean(parsed.data.permissions));
   if (permissionError) return NextResponse.json({ error: permissionError }, { status: 403 });
 
-  const user = await resolveUser(parsed.data.identifier);
+  const resolution = await resolveUser(parsed.data.identifier);
+  if (resolution.ambiguous) return NextResponse.json({ error: "That identifier matches more than one account. Use the member's numeric Discord ID or exact site username." }, { status: 409 });
+  const user = resolution.user;
   const isDiscordId = /^\d{15,32}$/.test(parsed.data.identifier);
   if (!user && parsed.data.role !== "OWNER") return NextResponse.json({ error: "That user has not signed into Game Night Tools yet. Only an Owner claim can be saved before first login." }, { status: 404 });
   if (!user && !isDiscordId) return NextResponse.json({ error: "Enter the Owner's numeric Discord ID so the claim can activate after their first login." }, { status: 400 });

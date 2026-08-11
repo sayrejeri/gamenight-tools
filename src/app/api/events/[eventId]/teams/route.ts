@@ -17,7 +17,9 @@ type EventRow = RowDataPacket & {
 type CohostRow = RowDataPacket & { permission_level: string };
 type TeamRoleRow = RowDataPacket & { role: string };
 type RosterRow = RowDataPacket & { user_id: string; display_name: string; role: string };
+type BracketStatusRow = RowDataPacket & { status: string };
 class TeamLimitReached extends Error {}
+class CompetitionEntrantsLocked extends Error {}
 
 async function loadEvent(eventId: string, userId: string): Promise<EventRow | null> {
   const rows = await query<EventRow[]>(
@@ -89,6 +91,16 @@ async function snapshotRoster(connection: PoolConnection, teamId: string) {
     [teamId],
   );
   return rows.map((row) => ({ userId: row.user_id, name: row.display_name, role: row.role }));
+}
+
+async function lockCompetitionEntrants(connection: PoolConnection, eventId: string): Promise<void> {
+  const [brackets] = await connection.query<BracketStatusRow[]>(
+    `SELECT status FROM brackets WHERE event_id = ? LIMIT 1 FOR UPDATE`,
+    [eventId],
+  );
+  if (brackets[0] && ["GENERATED", "LIVE", "COMPLETED"].includes(brackets[0].status)) {
+    throw new CompetitionEntrantsLocked("Tournament teams are locked after competition generation. Reset/regenerate the competition before changing entrants or roster snapshots.");
+  }
 }
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ eventId: string }> }) {
@@ -177,6 +189,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
         `SELECT max_participants FROM events WHERE id = ? LIMIT 1 FOR UPDATE`,
         [eventId],
       );
+      await lockCompetitionEntrants(connection, eventId);
       const lockedMaximum = eventLocks[0]?.max_participants ?? null;
       const [existingRows] = await connection.query<(RowDataPacket & { status: string })[]>(`SELECT status FROM event_team_entries WHERE event_id = ? AND team_id = ? LIMIT 1 FOR UPDATE`, [eventId, parsed.data.teamId]);
       const [countRows] = await connection.query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM event_team_entries WHERE event_id = ? AND status = 'REGISTERED'`, [eventId]);
@@ -193,7 +206,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ev
       );
     });
   } catch (error) {
-    if (error instanceof TeamLimitReached) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error instanceof TeamLimitReached || error instanceof CompetitionEntrantsLocked) return NextResponse.json({ error: error.message }, { status: 409 });
     if (error instanceof Error && error.message === "TEAM_ROSTER_EMPTY") return NextResponse.json({ error: "That team has no active competitive roster members." }, { status: 409 });
     throw error;
   }
@@ -215,7 +228,16 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   const role = await userTeamRole(session.userId, parsed.data.teamId);
   if (!canManage && !["OWNER", "MANAGER", "CAPTAIN"].includes(role ?? "")) return NextResponse.json({ error: "You cannot withdraw this team." }, { status: 403 });
 
-  await query(`UPDATE event_team_entries SET status = 'WITHDRAWN', updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ? AND team_id = ?`, [eventId, parsed.data.teamId]);
+  try {
+    await withTransaction(async (connection) => {
+      await connection.query(`SELECT id FROM events WHERE id = ? LIMIT 1 FOR UPDATE`, [eventId]);
+      await lockCompetitionEntrants(connection, eventId);
+      await connection.execute(`UPDATE event_team_entries SET status = 'WITHDRAWN', updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ? AND team_id = ?`, [eventId, parsed.data.teamId]);
+    });
+  } catch (error) {
+    if (error instanceof CompetitionEntrantsLocked) return NextResponse.json({ error: error.message }, { status: 409 });
+    throw error;
+  }
   await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: "event.team_withdrawn", targetType: "team", targetId: parsed.data.teamId, details: { role, byStaff: canManage } });
   return NextResponse.json({ success: true });
 }

@@ -153,6 +153,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
     );
     const bracket = rows[0];
     if (!bracket || !bracket.settings_json) return { ok: false as const, statusCode: 400, error: "Save the competition before changing its status." };
+    if (parsed.data.status === "GENERATED" && ["LIVE", "COMPLETED"].includes(bracket.status)) {
+      return { ok: false as const, statusCode: 409, error: "A live or completed competition cannot return to editable Generated state. Use Match Center to reopen or correct results." };
+    }
 
     let state: unknown = null;
     try { state = JSON.parse(bracket.settings_json); } catch { state = null; }

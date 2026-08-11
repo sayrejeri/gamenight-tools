@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getEventViewerAccess } from "@/lib/event-view-access";
 
 function escapeIcs(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll(";", "\\;").replaceAll(",", "\\,").replaceAll("\n", "\\n");
@@ -27,6 +28,9 @@ export async function GET(
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   const { eventId } = await context.params;
+  const access = await getEventViewerAccess(session.userId, eventId);
+  if (!access.event || !access.canView) return NextResponse.json({ error: "Event not found." }, { status: 404 });
+
   const events = await query<EventRow[]>(
     `SELECT e.id, e.name, e.description, e.starts_at, e.game_url, w.name AS workspace_name
      FROM events e INNER JOIN workspaces w ON w.id = e.workspace_id

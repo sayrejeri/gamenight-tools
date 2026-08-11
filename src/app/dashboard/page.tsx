@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { RowDataPacket } from "mysql2";
 import { isPlatformOwner, requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getEventManagerWorkspaceScope } from "@/lib/event-view-access";
 import { RedeemCodeForm } from "@/components/redeem-code-form";
 import { CohostResponseButtons } from "@/components/cohost-response-buttons";
 import { LocalDateTime } from "@/components/local-date-time";
@@ -44,6 +45,13 @@ function WorkspaceCard({ workspace }: { workspace: WorkspaceRow | DiscoveredWork
 
 export default async function DashboardPage() {
   const session = await requireSession();
+  const managerScope = await getEventManagerWorkspaceScope(session.userId);
+  const managerSql = managerScope.allWorkspaces
+    ? "1 = 1"
+    : managerScope.workspaceIds.length
+      ? `e.workspace_id IN (${managerScope.workspaceIds.map(() => "?").join(",")})`
+      : "1 = 0";
+
   const [memberships, discovered, events, invitations] = await Promise.all([
     query<WorkspaceRow[]>(
       `SELECT w.id, w.name, w.discord_guild_id, w.icon_url, w.banner_url,
@@ -69,17 +77,45 @@ export default async function DashboardPage() {
               w.name AS workspace_name, e.join_code_required
        FROM events e
        INNER JOIN workspaces w ON w.id = e.workspace_id
-       LEFT JOIN workspace_members wm ON wm.workspace_id = e.workspace_id AND wm.user_id = ? AND wm.status = 'ACTIVE'
        LEFT JOIN user_guilds ug ON ug.user_id = ? AND ug.guild_id = w.discord_guild_id
-       LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ?
+       LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ? AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')
        LEFT JOIN event_cohosts ec ON ec.event_id = e.id AND ec.invited_user_id = ? AND ec.status = 'ACCEPTED'
-       WHERE (e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL') AND e.visibility = 'PUBLIC')
-          OR wm.user_id IS NOT NULL
-          OR ep.user_id IS NOT NULL
+       WHERE e.primary_host_id = ?
           OR ec.invited_user_id IS NOT NULL
-          OR (e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL') AND ug.user_id IS NOT NULL AND e.visibility = 'SERVER')
+          OR (${managerSql})
+          OR (
+            e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL')
+            AND (
+              e.visibility = 'PUBLIC'
+              OR (e.visibility = 'SERVER' AND (
+                ug.user_id IS NOT NULL
+                OR ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
+              OR (e.visibility = 'CODE_ONLY' AND (
+                ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
+              OR (e.visibility = 'UNLISTED' AND (
+                ep.user_id IS NOT NULL
+                OR EXISTS(
+                  SELECT 1 FROM event_team_entries ete
+                  WHERE ete.event_id = e.id AND ete.status = 'REGISTERED'
+                    AND JSON_SEARCH(ete.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+                )
+              ))
+            )
+          )
        ORDER BY COALESCE(e.starts_at, '9999-12-31') ASC LIMIT 60`,
-      [session.userId, session.userId, session.userId, session.userId],
+      [session.userId, session.userId, session.userId, session.userId, ...managerScope.workspaceIds, session.userId, session.userId, session.userId],
     ),
     query<InvitationRow[]>(
       `SELECT ec.id, e.name AS event_name, w.name AS workspace_name, ec.permission_level

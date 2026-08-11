@@ -3,11 +3,24 @@ import { query } from "@/lib/db";
 
 export type CompetitiveFilters = {
   workspaceId?: string | null;
+  /** Explicit workspace scope. Passing [] intentionally returns no data. */
+  workspaceIds?: string[] | null;
   game?: string | null;
   from?: Date | null;
   to?: Date | null;
+  /** Viewer whose event/profile/block access should be applied. */
+  viewerUserId?: string | null;
+  /** Anonymous/public presentation: only PUBLIC events and PUBLIC player profiles. */
+  publicOnly?: boolean;
+  /** Limit match/champion reads to one linked player. */
+  subjectUserId?: string | null;
+  /** Workspaces where the viewer has effective event-management permissions. */
+  managerWorkspaceIds?: string[] | null;
+  /** Platform-level event management across every workspace. */
+  managerAllWorkspaces?: boolean;
 };
 
+export type CompetitiveManagerScope = { allWorkspaces: boolean; workspaceIds: string[] };
 export type SeasonWindow = { label: string; start: Date; end: Date };
 
 export type PlayerLeaderboardEntry = {
@@ -113,6 +126,8 @@ type MatchRow = RowDataPacket & {
   b_profile_visibility: string | null;
   a_show_event_history: number | null;
   b_show_event_history: number | null;
+  a_account_status: string | null;
+  b_account_status: string | null;
   a_team_id: string | null;
   b_team_id: string | null;
   winner_team_id: string | null;
@@ -128,10 +143,15 @@ type MatchRow = RowDataPacket & {
   b_team_profile_status: string | null;
 };
 
-type ChampionRow = RowDataPacket & { user_id: string | null; team_id: string | null };
+type ChampionRow = RowDataPacket & { user_id: string | null; team_id: string | null; event_id: string; decided_at: Date };
 type AttendanceRow = RowDataPacket & { status: string; checked_in_at: Date | null };
+type CountRow = RowDataPacket & { total: number };
+type GameRow = RowDataPacket & { game_name: string };
+type BlockRow = RowDataPacket & { blocker_user_id: string; blocked_user_id: string };
+type RankSummaryRow = RowDataPacket & { user_id: string; display_name: string; wins: number; losses: number; matches: number };
 
 type Outcome = { won: boolean; at: Date; eventId: string };
+type SqlScope = { sql: string; values: unknown[] };
 
 export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
   const year = now.getUTCFullYear();
@@ -141,18 +161,88 @@ export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
   return { label: `${year} Season ${quarter + 1}`, start, end };
 }
 
-function filterSql(filters: CompetitiveFilters, dateExpression: string): { sql: string; values: unknown[] } {
-  const clauses: string[] = [];
+function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alias = "e"): SqlScope {
+  // A postponed tournament contributes competitive history only if it previously
+  // entered LIVE through the audited event lifecycle. START now writes that audit
+  // marker inside the same transaction as the status transition.
+  const clauses: string[] = [`(
+    ${alias}.status IN ('LIVE', 'COMPLETED')
+    OR (
+      ${alias}.status = 'POSTPONED'
+      AND EXISTS(
+        SELECT 1 FROM audit_logs live_audit
+        WHERE live_audit.event_id = ${alias}.id
+          AND live_audit.action_name = 'event.status.live'
+      )
+    )
+  )`];
   const values: unknown[] = [];
-  if (filters.workspaceId) { clauses.push("e.workspace_id = ?"); values.push(filters.workspaceId); }
-  if (filters.game) { clauses.push("COALESCE(e.subgame_name, e.game_name, e.platform_name, 'Game Night') = ?"); values.push(filters.game); }
+
+  if (filters.workspaceIds !== undefined && filters.workspaceIds !== null) {
+    if (!filters.workspaceIds.length) clauses.push("1 = 0");
+    else {
+      clauses.push(`${alias}.workspace_id IN (${filters.workspaceIds.map(() => "?").join(",")})`);
+      values.push(...filters.workspaceIds);
+    }
+  }
+  if (filters.workspaceId) { clauses.push(`${alias}.workspace_id = ?`); values.push(filters.workspaceId); }
+  if (filters.game) { clauses.push(`COALESCE(${alias}.subgame_name, ${alias}.game_name, ${alias}.platform_name, 'Game Night') = ?`); values.push(filters.game); }
   if (filters.from) { clauses.push(`${dateExpression} >= ?`); values.push(filters.from); }
   if (filters.to) { clauses.push(`${dateExpression} < ?`); values.push(filters.to); }
+
+  const viewerUserId = filters.viewerUserId ?? null;
+  if (filters.publicOnly || !viewerUserId) {
+    clauses.push(`${alias}.visibility = 'PUBLIC'`);
+  } else {
+    const managerWorkspaceIds = filters.managerWorkspaceIds ?? [];
+    const managerWorkspaceSql = filters.managerAllWorkspaces
+      ? "1 = 1"
+      : managerWorkspaceIds.length
+        ? `${alias}.workspace_id IN (${managerWorkspaceIds.map(() => "?").join(",")})`
+        : "1 = 0";
+    clauses.push(`(
+      (${managerWorkspaceSql})
+      OR ${alias}.visibility = 'PUBLIC'
+      OR (${alias}.visibility = 'SERVER' AND (
+        EXISTS(
+          SELECT 1 FROM user_guilds cug
+          INNER JOIN workspaces cgw ON cgw.discord_guild_id = cug.guild_id
+          WHERE cug.user_id = ? AND cgw.id = ${alias}.workspace_id
+        )
+        OR ${alias}.primary_host_id = ?
+        OR EXISTS(SELECT 1 FROM event_cohosts svc WHERE svc.event_id = ${alias}.id AND svc.invited_user_id = ? AND svc.status = 'ACCEPTED')
+        OR EXISTS(SELECT 1 FROM event_participants svp WHERE svp.event_id = ${alias}.id AND svp.user_id = ? AND svp.status NOT IN ('REJECTED', 'WITHDRAWN'))
+        OR EXISTS(
+          SELECT 1 FROM event_team_entries svt
+          WHERE svt.event_id = ${alias}.id AND svt.status = 'REGISTERED'
+            AND JSON_SEARCH(svt.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+        )
+      ))
+      OR (${alias}.visibility IN ('UNLISTED', 'CODE_ONLY') AND (
+        ${alias}.primary_host_id = ?
+        OR EXISTS(SELECT 1 FROM event_cohosts cec WHERE cec.event_id = ${alias}.id AND cec.invited_user_id = ? AND cec.status = 'ACCEPTED')
+        OR EXISTS(SELECT 1 FROM event_participants cep WHERE cep.event_id = ${alias}.id AND cep.user_id = ? AND cep.status NOT IN ('REJECTED', 'WITHDRAWN'))
+        OR EXISTS(
+          SELECT 1 FROM event_team_entries cet
+          WHERE cet.event_id = ${alias}.id AND cet.status = 'REGISTERED'
+            AND JSON_SEARCH(cet.roster_json, 'one', ?, NULL, '$[*].userId') IS NOT NULL
+        )
+      ))
+      OR (${alias}.visibility = 'STAFF_ONLY' AND (
+        ${alias}.primary_host_id = ?
+        OR EXISTS(SELECT 1 FROM event_cohosts sec WHERE sec.event_id = ${alias}.id AND sec.invited_user_id = ? AND sec.status = 'ACCEPTED')
+      ))
+    )`);
+    values.push(...managerWorkspaceIds, ...Array(11).fill(viewerUserId));
+  }
+
   return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", values };
 }
 
 async function loadMatchRows(filters: CompetitiveFilters = {}): Promise<MatchRow[]> {
-  const extra = filterSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
+  const scope = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
+  const subjectSql = filters.subjectUserId ? " AND (a.user_id = ? OR b.user_id = ?)" : "";
+  const values = [...scope.values, ...(filters.subjectUserId ? [filters.subjectUserId, filters.subjectUserId] : [])];
   return query<MatchRow[]>(
     `SELECT bm.id, e.id AS event_id, e.name AS event_name, e.workspace_id, w.name AS workspace_name,
             COALESCE(e.subgame_name, e.game_name, e.platform_name, 'Game Night') AS game_name,
@@ -167,6 +257,7 @@ async function loadMatchRows(filters: CompetitiveFilters = {}): Promise<MatchRow
             ua.profile_visibility AS a_profile_visibility, ub.profile_visibility AS b_profile_visibility,
             COALESCE(upa.show_event_history, 1) AS a_show_event_history,
             COALESCE(upb.show_event_history, 1) AS b_show_event_history,
+            ua.account_status AS a_account_status, ub.account_status AS b_account_status,
             a.team_id AS a_team_id, b.team_id AS b_team_id, win.team_id AS winner_team_id,
             ta.slug AS a_team_slug, tb.slug AS b_team_slug,
             ta.name AS a_team_name, tb.name AS b_team_name, ta.tag AS a_team_tag, tb.tag AS b_team_tag,
@@ -186,23 +277,62 @@ async function loadMatchRows(filters: CompetitiveFilters = {}): Promise<MatchRow
      LEFT JOIN teams ta ON ta.id = a.team_id
      LEFT JOIN teams tb ON tb.id = b.team_id
      WHERE bm.status IN ('COMPLETED', 'FORFEIT')
-       AND bm.participant_a_entry_id IS NOT NULL AND bm.participant_b_entry_id IS NOT NULL${extra.sql}
+       AND bm.participant_a_entry_id IS NOT NULL AND bm.participant_b_entry_id IS NOT NULL${scope.sql}${subjectSql}
      ORDER BY COALESCE(bm.completed_at, bm.updated_at) ASC, bm.id ASC`,
-    extra.values,
+    values,
   );
 }
 
 async function loadChampionRows(filters: CompetitiveFilters = {}): Promise<ChampionRow[]> {
-  const extra = filterSql(filters, "COALESCE(br.completed_at, e.starts_at, e.created_at)");
+  const scope = eventScopeSql(filters, "COALESCE(br.completed_at, e.starts_at, e.created_at)");
+  const subjectSql = filters.subjectUserId ? " AND be.user_id = ?" : "";
   return query<ChampionRow[]>(
-    `SELECT CAST(be.user_id AS CHAR) AS user_id, be.team_id
+    `SELECT CAST(be.user_id AS CHAR) AS user_id, be.team_id, br.event_id,
+            COALESCE(br.completed_at, e.starts_at, e.created_at) AS decided_at
      FROM bracket_entries be
      INNER JOIN brackets br ON br.id = be.bracket_id
      INNER JOIN events e ON e.id = br.event_id
      WHERE be.status = 'ADVANCED' AND br.status = 'COMPLETED'
-       AND (be.user_id IS NOT NULL OR be.team_id IS NOT NULL)${extra.sql}`,
-    extra.values,
+       AND (be.user_id IS NOT NULL OR be.team_id IS NOT NULL)${scope.sql}${subjectSql}`,
+    [...scope.values, ...(filters.subjectUserId ? [filters.subjectUserId] : [])],
   );
+}
+
+async function loadBlockedUsers(viewerUserId: string | null | undefined, candidateIds: string[]): Promise<Set<string>> {
+  if (!viewerUserId || !candidateIds.length) return new Set();
+  const ids = [...new Set(candidateIds.filter((id) => id !== viewerUserId))];
+  if (!ids.length) return new Set();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await query<BlockRow[]>(
+    `SELECT CAST(blocker_user_id AS CHAR) AS blocker_user_id, CAST(blocked_user_id AS CHAR) AS blocked_user_id
+     FROM user_blocks
+     WHERE (blocker_user_id = ? AND blocked_user_id IN (${placeholders}))
+        OR (blocked_user_id = ? AND blocker_user_id IN (${placeholders}))`,
+    [viewerUserId, ...ids, viewerUserId, ...ids],
+  );
+  const blocked = new Set<string>();
+  for (const row of rows) blocked.add(row.blocker_user_id === viewerUserId ? row.blocked_user_id : row.blocker_user_id);
+  return blocked;
+}
+
+function blockPairKey(a: string, b: string): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+async function loadBlockPairs(anchorIds: string[], candidateIds: string[]): Promise<Set<string>> {
+  const anchors = [...new Set(anchorIds.filter(Boolean))];
+  const candidates = [...new Set(candidateIds.filter(Boolean))];
+  if (!anchors.length || !candidates.length) return new Set();
+  const anchorPlaceholders = anchors.map(() => "?").join(",");
+  const candidatePlaceholders = candidates.map(() => "?").join(",");
+  const rows = await query<BlockRow[]>(
+    `SELECT CAST(blocker_user_id AS CHAR) AS blocker_user_id, CAST(blocked_user_id AS CHAR) AS blocked_user_id
+     FROM user_blocks
+     WHERE (blocker_user_id IN (${anchorPlaceholders}) AND blocked_user_id IN (${candidatePlaceholders}))
+        OR (blocked_user_id IN (${anchorPlaceholders}) AND blocker_user_id IN (${candidatePlaceholders}))`,
+    [...anchors, ...candidates, ...anchors, ...candidates],
+  );
+  return new Set(rows.map((row) => blockPairKey(row.blocker_user_id, row.blocked_user_id)));
 }
 
 function streak(outcomes: Outcome[]): { currentStreak: number; currentStreakType: "W" | "L" | null; bestWinStreak: number } {
@@ -227,8 +357,20 @@ function rate(wins: number, losses: number): number {
   return total ? Math.round((wins / total) * 1000) / 10 : 0;
 }
 
+function playerSideEligible(input: {
+  id: string | null; site: string | null; name: string | null; discord: string | null;
+  visibility: string | null; show: number | null; accountStatus: string | null;
+}, publicOnly: boolean): boolean {
+  if (!input.id || !input.site || !input.name || !input.discord) return false;
+  if (input.accountStatus !== "ACTIVE" || Number(input.show ?? 1) !== 1) return false;
+  if (publicOnly) return input.visibility === "PUBLIC";
+  return input.visibility !== "PRIVATE";
+}
+
 export async function loadPlayerLeaderboard(filters: CompetitiveFilters = {}): Promise<PlayerLeaderboardEntry[]> {
   const [rows, champions] = await Promise.all([loadMatchRows(filters), loadChampionRows(filters)]);
+  const candidateIds = rows.flatMap((row) => [row.a_user_id, row.b_user_id]).filter((id): id is string => Boolean(id));
+  const blocked = await loadBlockedUsers(filters.viewerUserId, candidateIds);
   const championshipMap = new Map<string, number>();
   for (const row of champions) if (row.user_id) championshipMap.set(row.user_id, (championshipMap.get(row.user_id) ?? 0) + 1);
 
@@ -236,14 +378,15 @@ export async function loadPlayerLeaderboard(filters: CompetitiveFilters = {}): P
     siteUsername: string; displayName: string; discordId: string; avatarHash: string | null;
     wins: number; losses: number; events: Set<string>; outcomes: Outcome[];
   }>();
+  const publicOnly = Boolean(filters.publicOnly || !filters.viewerUserId);
   for (const row of rows) {
     const sides = [
-      { id: row.a_user_id, site: row.a_site_username, name: row.a_user_display, discord: row.a_discord_id, avatar: row.a_avatar_hash, visibility: row.a_profile_visibility, show: row.a_show_event_history },
-      { id: row.b_user_id, site: row.b_site_username, name: row.b_user_display, discord: row.b_discord_id, avatar: row.b_avatar_hash, visibility: row.b_profile_visibility, show: row.b_show_event_history },
+      { id: row.a_user_id, site: row.a_site_username, name: row.a_user_display, discord: row.a_discord_id, avatar: row.a_avatar_hash, visibility: row.a_profile_visibility, show: row.a_show_event_history, accountStatus: row.a_account_status },
+      { id: row.b_user_id, site: row.b_site_username, name: row.b_user_display, discord: row.b_discord_id, avatar: row.b_avatar_hash, visibility: row.b_profile_visibility, show: row.b_show_event_history, accountStatus: row.b_account_status },
     ];
     for (const side of sides) {
-      if (!side.id || !side.site || !side.name || !side.discord || side.visibility === "PRIVATE" || Number(side.show ?? 1) !== 1) continue;
-      const record = records.get(side.id) ?? { siteUsername: side.site, displayName: side.name, discordId: side.discord, avatarHash: side.avatar, wins: 0, losses: 0, events: new Set<string>(), outcomes: [] };
+      if (!playerSideEligible(side, publicOnly) || !side.id || blocked.has(side.id)) continue;
+      const record = records.get(side.id) ?? { siteUsername: side.site!, displayName: side.name!, discordId: side.discord!, avatarHash: side.avatar, wins: 0, losses: 0, events: new Set<string>(), outcomes: [] };
       const won = row.winner_user_id === side.id;
       if (won) record.wins += 1; else record.losses += 1;
       record.events.add(row.event_id);
@@ -290,7 +433,88 @@ export async function loadTeamLeaderboard(filters: CompetitiveFilters = {}): Pro
   }).sort((a, b) => b.championships - a.championships || b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.matches - a.matches || a.name.localeCompare(b.name));
 }
 
-function snapshotForUser(rows: MatchRow[], champions: Set<string>, userId: string): CompetitiveSnapshot {
+export async function loadDecidedMatchCount(filters: CompetitiveFilters = {}): Promise<number> {
+  const scope = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
+  const rows = await query<CountRow[]>(
+    `SELECT COUNT(DISTINCT bm.id) AS total
+     FROM bracket_matches bm
+     INNER JOIN brackets br ON br.id = bm.bracket_id
+     INNER JOIN events e ON e.id = br.event_id
+     WHERE bm.status IN ('COMPLETED', 'FORFEIT')
+       AND bm.participant_a_entry_id IS NOT NULL AND bm.participant_b_entry_id IS NOT NULL${scope.sql}`,
+    scope.values,
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
+export async function loadCompetitiveGames(filters: CompetitiveFilters = {}): Promise<string[]> {
+  const scope = eventScopeSql({ ...filters, game: null }, "COALESCE(bm.completed_at, bm.updated_at)");
+  const rows = await query<GameRow[]>(
+    `SELECT DISTINCT COALESCE(e.subgame_name, e.game_name, e.platform_name, 'Game Night') AS game_name
+     FROM bracket_matches bm
+     INNER JOIN brackets br ON br.id = bm.bracket_id
+     INNER JOIN events e ON e.id = br.event_id
+     WHERE bm.status IN ('COMPLETED', 'FORFEIT')${scope.sql}
+     ORDER BY game_name`,
+    scope.values,
+  );
+  return rows.map((row) => row.game_name);
+}
+
+async function loadPlayerRankSummaries(filters: CompetitiveFilters = {}): Promise<Array<{ userId: string; displayName: string; wins: number; losses: number; matches: number; championships: number; winRate: number }>> {
+  const scopeA = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
+  const scopeB = eventScopeSql(filters, "COALESCE(bm.completed_at, bm.updated_at)");
+  const publicOnly = Boolean(filters.publicOnly || !filters.viewerUserId);
+  const rows = await query<RankSummaryRow[]>(
+    `SELECT s.user_id, MAX(COALESCE(u.global_name, u.username, u.site_username)) AS display_name,
+            SUM(s.won) AS wins, COUNT(*) - SUM(s.won) AS losses, COUNT(*) AS matches
+     FROM (
+       SELECT CAST(a.user_id AS CHAR) AS user_id, CASE WHEN win.user_id = a.user_id THEN 1 ELSE 0 END AS won
+       FROM bracket_matches bm
+       INNER JOIN brackets br ON br.id = bm.bracket_id
+       INNER JOIN events e ON e.id = br.event_id
+       LEFT JOIN bracket_entries a ON a.id = bm.participant_a_entry_id
+       LEFT JOIN bracket_entries b ON b.id = bm.participant_b_entry_id
+       LEFT JOIN bracket_entries win ON win.id = bm.winner_entry_id
+       WHERE bm.status IN ('COMPLETED', 'FORFEIT') AND a.user_id IS NOT NULL
+         AND bm.participant_a_entry_id IS NOT NULL AND bm.participant_b_entry_id IS NOT NULL${scopeA.sql}
+       UNION ALL
+       SELECT CAST(b.user_id AS CHAR) AS user_id, CASE WHEN win.user_id = b.user_id THEN 1 ELSE 0 END AS won
+       FROM bracket_matches bm
+       INNER JOIN brackets br ON br.id = bm.bracket_id
+       INNER JOIN events e ON e.id = br.event_id
+       LEFT JOIN bracket_entries a ON a.id = bm.participant_a_entry_id
+       LEFT JOIN bracket_entries b ON b.id = bm.participant_b_entry_id
+       LEFT JOIN bracket_entries win ON win.id = bm.winner_entry_id
+       WHERE bm.status IN ('COMPLETED', 'FORFEIT') AND b.user_id IS NOT NULL
+         AND bm.participant_a_entry_id IS NOT NULL AND bm.participant_b_entry_id IS NOT NULL${scopeB.sql}
+     ) s
+     INNER JOIN users u ON u.id = s.user_id
+     LEFT JOIN user_preferences up ON up.user_id = u.id
+     WHERE u.account_status = 'ACTIVE' AND u.site_username IS NOT NULL
+       AND COALESCE(up.show_event_history, 1) = 1
+       AND ${publicOnly ? "u.profile_visibility = 'PUBLIC'" : "u.profile_visibility <> 'PRIVATE'"}
+     GROUP BY s.user_id`,
+    [...scopeA.values, ...scopeB.values],
+  );
+  const blocked = await loadBlockedUsers(filters.viewerUserId, rows.map((row) => row.user_id));
+  const champions = await loadChampionRows(filters);
+  const championshipMap = new Map<string, number>();
+  for (const champion of champions) if (champion.user_id) championshipMap.set(champion.user_id, (championshipMap.get(champion.user_id) ?? 0) + 1);
+  return rows.filter((row) => !blocked.has(row.user_id)).map((row) => {
+    const wins = Number(row.wins ?? 0);
+    const losses = Number(row.losses ?? 0);
+    return { userId: row.user_id, displayName: row.display_name, wins, losses, matches: Number(row.matches ?? 0), championships: championshipMap.get(row.user_id) ?? 0, winRate: rate(wins, losses) };
+  }).sort((a, b) => b.championships - a.championships || b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses || b.matches - a.matches || a.displayName.localeCompare(b.displayName));
+}
+
+export async function loadPlayerRank(userId: string, filters: CompetitiveFilters = {}): Promise<number | null> {
+  const rows = await loadPlayerRankSummaries(filters);
+  const index = rows.findIndex((row) => row.userId === userId);
+  return index >= 0 ? index + 1 : null;
+}
+
+function snapshotForUser(rows: MatchRow[], championshipCount: number, userId: string): CompetitiveSnapshot {
   let wins = 0;
   let losses = 0;
   const events = new Set<string>();
@@ -303,42 +527,80 @@ function snapshotForUser(rows: MatchRow[], champions: Set<string>, userId: strin
     outcomes.push({ won, at: new Date(row.completed_at ?? row.updated_at), eventId: row.event_id });
   }
   const streaks = streak(outcomes);
-  return { wins, losses, matches: wins + losses, eventsPlayed: events.size, championships: champions.size, winRate: rate(wins, losses), ...streaks };
+  return { wins, losses, matches: wins + losses, eventsPlayed: events.size, championships: championshipCount, winRate: rate(wins, losses), ...streaks };
 }
 
-export async function loadPlayerCompetitiveProfile(userId: string): Promise<PlayerCompetitiveProfile> {
+export async function loadPlayerCompetitiveProfile(userId: string, viewerUserId: string | null = null, managerScope: CompetitiveManagerScope = { allWorkspaces: false, workspaceIds: [] }): Promise<PlayerCompetitiveProfile> {
   const season = currentCompetitiveSeason();
-  const [allRows, allChampions, seasonRows, seasonChampions, attendanceRows] = await Promise.all([
-    loadMatchRows(),
-    loadChampionRows(),
-    loadMatchRows({ from: season.start, to: season.end }),
-    loadChampionRows({ from: season.start, to: season.end }),
+  const managerFilters = { managerAllWorkspaces: managerScope.allWorkspaces, managerWorkspaceIds: managerScope.workspaceIds };
+  const baseFilters: CompetitiveFilters = { viewerUserId, publicOnly: !viewerUserId, subjectUserId: userId, ...managerFilters };
+  const attendanceScope = eventScopeSql({ viewerUserId, publicOnly: !viewerUserId, ...managerFilters }, "COALESCE(e.starts_at, e.created_at)");
+  const [allRows, championRows, attendanceRows] = await Promise.all([
+    loadMatchRows(baseFilters),
+    loadChampionRows(baseFilters),
     query<AttendanceRow[]>(
-      `SELECT ep.status, ep.checked_in_at FROM event_participants ep
+      `SELECT ep.status, ep.checked_in_at
+       FROM event_participants ep
        INNER JOIN events e ON e.id = ep.event_id
-       WHERE ep.user_id = ? AND e.status = 'COMPLETED' AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')`,
-      [userId],
+       WHERE ep.user_id = ? AND e.status = 'COMPLETED'
+         AND ep.status NOT IN ('REJECTED', 'WITHDRAWN')${attendanceScope.sql}`,
+      [userId, ...attendanceScope.values],
     ),
   ]);
-  const championEvents = new Set<string>();
-  const championEventRows = await query<(RowDataPacket & { event_id: string })[]>(
-    `SELECT DISTINCT br.event_id FROM bracket_entries be INNER JOIN brackets br ON br.id = be.bracket_id
-     WHERE be.user_id = ? AND be.status = 'ADVANCED' AND br.status = 'COMPLETED'`,
-    [userId],
-  );
-  championEventRows.forEach((row) => championEvents.add(row.event_id));
-  const seasonChampionCount = seasonChampions.filter((row) => row.user_id === userId).length;
-  const allChampionCount = allChampions.filter((row) => row.user_id === userId).length;
-  const allChampionKeys = new Set(Array.from({ length: allChampionCount }, (_, index) => `c${index}`));
-  const seasonChampionKeys = new Set(Array.from({ length: seasonChampionCount }, (_, index) => `s${index}`));
-  const targetRows = allRows.filter((row) => row.a_user_id === userId || row.b_user_id === userId);
+
+  const championEvents = new Set(championRows.map((row) => row.event_id));
+  const seasonChampionEvents = new Set(championRows
+    .filter((row) => {
+      const at = new Date(row.decided_at).getTime();
+      return at >= season.start.getTime() && at < season.end.getTime();
+    })
+    .map((row) => row.event_id));
+  const seasonRows = allRows.filter((row) => {
+    const at = new Date(row.completed_at ?? row.updated_at).getTime();
+    return at >= season.start.getTime() && at < season.end.getTime();
+  });
+
+  const opponentIds = allRows.flatMap((row) => {
+    if (row.a_user_id === userId) return row.b_user_id ? [row.b_user_id] : [];
+    if (row.b_user_id === userId) return row.a_user_id ? [row.a_user_id] : [];
+    return [];
+  });
+  const blockPairs = await loadBlockPairs([userId, ...(viewerUserId && viewerUserId !== userId ? [viewerUserId] : [])], opponentIds);
+
   const eventMap = new Map<string, CompetitiveHistoryItem>();
   const recentMatches: CompetitiveRecentMatch[] = [];
   const gameMap = new Map<string, { wins: number; losses: number }>();
-  for (const row of targetRows) {
+  for (const row of allRows) {
+    const userOnA = row.a_user_id === userId;
+    if (!userOnA && row.b_user_id !== userId) continue;
     const won = row.winner_user_id === userId;
-    const opponentName = row.a_user_id === userId ? (row.b_user_display ?? "Opponent") : (row.a_user_display ?? "Opponent");
-    const history = eventMap.get(row.event_id) ?? { eventId: row.event_id, eventName: row.event_name, workspaceName: row.workspace_name, gameName: row.game_name, eventStartsAt: row.event_starts_at, wins: 0, losses: 0, champion: championEvents.has(row.event_id) };
+    const opponentId = userOnA ? row.b_user_id : row.a_user_id;
+    const opponentDisplay = userOnA ? row.b_user_display : row.a_user_display;
+    const opponentVisibility = userOnA ? row.b_profile_visibility : row.a_profile_visibility;
+    const opponentShowHistory = userOnA ? row.b_show_event_history : row.a_show_event_history;
+    const opponentAccountStatus = userOnA ? row.b_account_status : row.a_account_status;
+    let opponentName = opponentDisplay ?? "Opponent";
+    if (opponentId) {
+      const blockedWithSubject = blockPairs.has(blockPairKey(userId, opponentId));
+      const blockedWithViewer = viewerUserId ? blockPairs.has(blockPairKey(viewerUserId, opponentId)) : false;
+      const visibilityAllowed = opponentId === viewerUserId
+        || (opponentVisibility === "PUBLIC")
+        || (Boolean(viewerUserId) && opponentVisibility === "MEMBERS");
+      if (opponentAccountStatus !== "ACTIVE" || Number(opponentShowHistory ?? 1) !== 1 || !visibilityAllowed || blockedWithSubject || blockedWithViewer) {
+        opponentName = "Private opponent";
+      }
+    }
+
+    const history = eventMap.get(row.event_id) ?? {
+      eventId: row.event_id,
+      eventName: row.event_name,
+      workspaceName: row.workspace_name,
+      gameName: row.game_name,
+      eventStartsAt: row.event_starts_at,
+      wins: 0,
+      losses: 0,
+      champion: championEvents.has(row.event_id),
+    };
     if (won) history.wins += 1; else history.losses += 1;
     eventMap.set(row.event_id, history);
     recentMatches.push({ matchId: row.id, eventId: row.event_id, eventName: row.event_name, workspaceName: row.workspace_name, gameName: row.game_name, opponentName, won, decidedAt: new Date(row.completed_at ?? row.updated_at) });
@@ -346,8 +608,9 @@ export async function loadPlayerCompetitiveProfile(userId: string): Promise<Play
     if (won) game.wins += 1; else game.losses += 1;
     gameMap.set(row.game_name, game);
   }
-  const allTime = snapshotForUser(targetRows, allChampionKeys, userId);
-  const seasonSnapshot = snapshotForUser(seasonRows.filter((row) => row.a_user_id === userId || row.b_user_id === userId), seasonChampionKeys, userId);
+
+  const allTime = snapshotForUser(allRows, championEvents.size, userId);
+  const seasonSnapshot = snapshotForUser(seasonRows, seasonChampionEvents.size, userId);
   const checkedIn = attendanceRows.filter((row) => Boolean(row.checked_in_at)).length;
   const noShows = attendanceRows.filter((row) => row.status === "NO_SHOW").length;
   const opportunities = checkedIn + noShows;
