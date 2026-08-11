@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getEventManagerWorkspaceScope } from "@/lib/event-view-access";
 import {
   currentCompetitiveSeason,
   loadCompetitiveGames,
@@ -25,16 +26,29 @@ export default async function LeaderboardsPage({ searchParams }: { searchParams:
   const requestedWorkspaceId = one(params.workspace) || null;
   const game = one(params.game) || null;
   const season = currentCompetitiveSeason();
+  const managerScope = await getEventManagerWorkspaceScope(session.userId);
+  const managerWorkspaceSql = managerScope.allWorkspaces
+    ? "1 = 1"
+    : managerScope.workspaceIds.length
+      ? `w.id IN (${managerScope.workspaceIds.map(() => "?").join(",")})`
+      : "1 = 0";
 
   const workspaces = await query<WorkspaceRow[]>(
-    `SELECT DISTINCT w.id, w.name FROM workspaces w
-     INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id
-     WHERE ug.user_id = ? AND w.profile_status = 'APPROVED' ORDER BY w.name`,
-    [session.userId],
+    `SELECT DISTINCT w.id, w.name
+     FROM workspaces w
+     LEFT JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id AND ug.user_id = ?
+     WHERE w.profile_status = 'APPROVED'
+       AND (ug.user_id IS NOT NULL OR (${managerWorkspaceSql}))
+     ORDER BY w.name`,
+    [session.userId, ...managerScope.workspaceIds],
   );
   const allowedWorkspaceIds = workspaces.map((workspace) => workspace.id);
   if (requestedWorkspaceId && !allowedWorkspaceIds.includes(requestedWorkspaceId)) notFound();
 
+  const managerFilters = {
+    managerAllWorkspaces: managerScope.allWorkspaces,
+    managerWorkspaceIds: managerScope.workspaceIds,
+  };
   const filters: CompetitiveFilters = {
     workspaceIds: allowedWorkspaceIds,
     workspaceId: requestedWorkspaceId,
@@ -42,10 +56,12 @@ export default async function LeaderboardsPage({ searchParams }: { searchParams:
     from: scope === "season" ? season.start : null,
     to: scope === "season" ? season.end : null,
     viewerUserId: session.userId,
+    ...managerFilters,
   };
   const discoveryFilters: CompetitiveFilters = {
     workspaceIds: allowedWorkspaceIds,
     viewerUserId: session.userId,
+    ...managerFilters,
   };
 
   const [games, playerRows, teamRows, totalMatches] = await Promise.all([
