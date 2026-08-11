@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getEventManagerWorkspaceScope } from "@/lib/event-view-access";
 import { currentCompetitiveSeason, loadPlayerCompetitiveProfile, loadPlayerRank } from "@/lib/competitive-stats";
 import { BrandMark } from "@/components/brand-mark";
 import { LocalDateTime } from "@/components/local-date-time";
@@ -51,9 +52,17 @@ export default async function CompetitiveProfilePage({ params }: { params: Promi
 
   const season = currentCompetitiveSeason();
   const viewerUserId = viewer?.userId ?? null;
-  const rankFilters = { viewerUserId, publicOnly: !viewerUserId };
+  const managerScope = viewerUserId
+    ? await getEventManagerWorkspaceScope(viewerUserId)
+    : { allWorkspaces: false, workspaceIds: [] };
+  const rankFilters = {
+    viewerUserId,
+    publicOnly: !viewerUserId,
+    managerAllWorkspaces: managerScope.allWorkspaces,
+    managerWorkspaceIds: managerScope.workspaceIds,
+  };
   const [profile, allRank, seasonRank] = await Promise.all([
-    loadPlayerCompetitiveProfile(user.id, viewerUserId),
+    loadPlayerCompetitiveProfile(user.id, viewerUserId, managerScope),
     loadPlayerRank(user.id, rankFilters),
     loadPlayerRank(user.id, { ...rankFilters, from: season.start, to: season.end }),
   ]);
