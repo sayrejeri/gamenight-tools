@@ -158,11 +158,20 @@ export function currentCompetitiveSeason(now = new Date()): SeasonWindow {
 }
 
 function eventScopeSql(filters: CompetitiveFilters, dateExpression: string, alias = "e"): SqlScope {
-  // POSTPONED can represent a tournament that was already live. Completed/forfeit
-  // match rows remain authoritative while the event is paused, while pre-live
-  // postponed events still contribute no competitive rows because they have no
-  // decided matches/championship state to select.
-  const clauses: string[] = [`${alias}.status IN ('LIVE', 'POSTPONED', 'COMPLETED')`];
+  // A postponed tournament contributes competitive history only if it previously
+  // entered LIVE through the audited event lifecycle. This keeps legitimate
+  // paused tournament results visible without exposing pre-live/test winners.
+  const clauses: string[] = [`(
+    ${alias}.status IN ('LIVE', 'COMPLETED')
+    OR (
+      ${alias}.status = 'POSTPONED'
+      AND EXISTS(
+        SELECT 1 FROM audit_logs live_audit
+        WHERE live_audit.event_id = ${alias}.id
+          AND live_audit.action_name = 'event.status.live'
+      )
+    )
+  )`];
   const values: unknown[] = [];
 
   if (filters.workspaceIds !== undefined && filters.workspaceIds !== null) {
