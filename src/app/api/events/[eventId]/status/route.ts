@@ -143,14 +143,23 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
       );
       if (action === "START" && event.bracket_enabled) await connection.execute(`UPDATE brackets SET status = 'LIVE', updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ?`, [eventId]);
       if (action === "COMPLETE" && event.bracket_enabled) await connection.execute(`UPDATE brackets SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3) WHERE event_id = ?`, [eventId]);
+
+      await writeAuditLog({
+        actorUserId: session.userId,
+        workspaceId: event.workspace_id,
+        eventId,
+        action: `event.status.${nextStatus.toLowerCase()}`,
+        targetType: "event",
+        targetId: eventId,
+        details: { previousStatus: event.status, action, reason: reason || null, bracketResult: result, bracketEntryMode: event.bracket_entry_mode },
+      }, connection);
+
       return result;
     });
   } catch (error) {
     if (error instanceof TransitionConflict) return NextResponse.json({ error: error.message }, { status: 409 });
     throw error;
   }
-
-  await writeAuditLog({ actorUserId: session.userId, workspaceId: event.workspace_id, eventId, action: `event.status.${nextStatus.toLowerCase()}`, targetType: "event", targetId: eventId, details: { previousStatus: event.status, action, reason: reason || null, bracketResult, bracketEntryMode: event.bracket_entry_mode } });
 
   if (action === "CANCEL") {
     const recipients = event.bracket_entry_mode === "TEAM"
