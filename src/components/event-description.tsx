@@ -10,13 +10,16 @@ type InlineMatch = {
   index: number;
   full: string;
   inner: string;
-  kind: "variable" | "code" | "bold" | "underline" | "strike" | "italic";
+  kind: "variable" | "code" | "boldItalic" | "bold" | "underline" | "strike" | "italic";
 };
 
 function earliestInlineMatch(text: string): InlineMatch | null {
   const patterns: Array<{ kind: InlineMatch["kind"]; regex: RegExp; innerGroup: number }> = [
     { kind: "variable", regex: /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/, innerGroup: 1 },
     { kind: "code", regex: /`([^`]+)`/, innerGroup: 1 },
+    // Toolbar actions can naturally produce ***text*** when bold and italic are
+    // applied to the same selection. Match that form before the individual rules.
+    { kind: "boldItalic", regex: /\*\*\*([^*\n]+)\*\*\*/, innerGroup: 1 },
     { kind: "bold", regex: /\*\*([^*]+)\*\*/, innerGroup: 1 },
     { kind: "underline", regex: /__([^_]+)__/, innerGroup: 1 },
     { kind: "strike", regex: /~~([^~]+)~~/, innerGroup: 1 },
@@ -75,6 +78,7 @@ function parseInline(text: string, context: EventDescriptionContext, prefix: str
     const key = `${prefix}-${match.kind}-${index}`;
     if (match.kind === "variable") nodes.push(variableNode(match.inner, context, key));
     else if (match.kind === "code") nodes.push(<code key={key}>{match.inner}</code>);
+    else if (match.kind === "boldItalic") nodes.push(<strong key={key}><em>{parseInline(match.inner, context, `${key}-inner`)}</em></strong>);
     else if (match.kind === "bold") nodes.push(<strong key={key}>{parseInline(match.inner, context, `${key}-inner`)}</strong>);
     else if (match.kind === "underline") nodes.push(<u key={key}>{parseInline(match.inner, context, `${key}-inner`)}</u>);
     else if (match.kind === "strike") nodes.push(<s key={key}>{parseInline(match.inner, context, `${key}-inner`)}</s>);
