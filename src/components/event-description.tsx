@@ -1,5 +1,3 @@
-"use client";
-
 import { Fragment, type ReactNode } from "react";
 import { LocalDateTime } from "@/components/local-date-time";
 import {
