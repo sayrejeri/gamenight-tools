@@ -8,7 +8,7 @@ import { EditEventForm } from "@/components/edit-event-form";
 
 type EventRow = RowDataPacket & {
   id: string; workspace_id: string; primary_host_id: string; status: string; name: string; description: string | null;
-  platform_name: string | null; subgame_name: string | null; game_url: string | null; game_external_id: string | null;
+  game_name: string | null; platform_name: string | null; subgame_name: string | null; game_url: string | null; game_external_id: string | null;
   game_universe_id: string | null; game_thumbnail_url: string | null; required_connection_type: string | null; starts_at: Date | null;
   signup_deadline: Date | null; check_in_opens_at: Date | null; check_in_deadline: Date | null; max_participants: number | null;
   timezone: string; visibility: string; join_code_required: number; bracket_enabled: number;
@@ -64,7 +64,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ even
         teamParticipants: Number(preview?.team_count ?? 0),
         workspace: preview?.workspace_name ?? "Server",
       }} initial={{
-        name: event.name, description: event.description ?? "", platformName: event.platform_name ?? "", subgameName: event.subgame_name ?? "",
+        name: event.name, description: event.description ?? "", platformName: event.platform_name ?? "", subgameName: event.subgame_name ?? "", legacyGameName: event.game_name ?? "",
         gameUrl: event.game_url ?? "", gameExternalId: event.game_external_id ?? "", gameUniverseId: event.game_universe_id ?? "",
         gameThumbnailUrl: event.game_thumbnail_url ?? "", requiredConnectionType: event.required_connection_type ?? "",
         startsAt: event.starts_at ? new Date(event.starts_at).toISOString() : null,
