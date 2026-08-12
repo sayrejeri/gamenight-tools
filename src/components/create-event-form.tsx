@@ -221,7 +221,7 @@ export function CreateEventForm({
     platform: fields.platformName,
     format: fields.bracketEnabled ? fields.bracketFormat : null,
     entrantMode: fields.bracketEntryMode,
-    seedingMode: fields.bracketSeedingMode,
+    seedingMode: fields.bracketEnabled ? fields.bracketSeedingMode : null,
     status: "DRAFT",
     visibility: fields.visibility,
     host: "You",
