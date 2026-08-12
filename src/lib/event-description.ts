@@ -127,6 +127,114 @@ export function interpolateEventDescription(source: string, context: EventDescri
   return source.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => resolveEventDescriptionValue(key, context) ?? full);
 }
 
+type PlainInlineParseResult = { text: string; index: number; closed: boolean };
+
+function plainDelimiterRunLength(text: string, index: number, delimiter: "*" | "_"): number {
+  let length = 0;
+  while (text[index + length] === delimiter) length += 1;
+  return length;
+}
+
+function plainClosesAt(text: string, index: number, marker: string): boolean {
+  if (marker === "*" || marker === "_") {
+    const run = plainDelimiterRunLength(text, index, marker);
+    return run === 1 || run >= 3;
+  }
+  return text.startsWith(marker, index);
+}
+
+function stripInlineMarkdownRange(text: string, start = 0, closeMarker?: string): PlainInlineParseResult {
+  let output = "";
+  let index = start;
+
+  while (index < text.length) {
+    if (closeMarker && plainClosesAt(text, index, closeMarker)) {
+      return { text: output, index: index + closeMarker.length, closed: true };
+    }
+
+    if (text.startsWith("***", index)) {
+      const innerItalic = stripInlineMarkdownRange(text, index + 3, "*");
+      if (innerItalic.closed && text.startsWith("**", innerItalic.index)) {
+        output += innerItalic.text;
+        index = innerItalic.index + 2;
+      } else {
+        output += "***";
+        index += 3;
+      }
+      continue;
+    }
+
+    if (text.startsWith("**", index)) {
+      const inner = stripInlineMarkdownRange(text, index + 2, "**");
+      if (inner.closed) {
+        output += inner.text;
+        index = inner.index;
+      } else {
+        output += "**";
+        index += 2;
+      }
+      continue;
+    }
+
+    if (text[index] === "*") {
+      const inner = stripInlineMarkdownRange(text, index + 1, "*");
+      if (inner.closed) {
+        output += inner.text;
+        index = inner.index;
+      } else {
+        output += "*";
+        index += 1;
+      }
+      continue;
+    }
+
+    if (text.startsWith("__", index)) {
+      const inner = stripInlineMarkdownRange(text, index + 2, "__");
+      if (inner.closed) {
+        output += inner.text;
+        index = inner.index;
+      } else {
+        output += "__";
+        index += 2;
+      }
+      continue;
+    }
+
+    if (text[index] === "_") {
+      const inner = stripInlineMarkdownRange(text, index + 1, "_");
+      if (inner.closed) {
+        output += inner.text;
+        index = inner.index;
+      } else {
+        output += "_";
+        index += 1;
+      }
+      continue;
+    }
+
+    if (text.startsWith("~~", index)) {
+      const inner = stripInlineMarkdownRange(text, index + 2, "~~");
+      if (inner.closed) {
+        output += inner.text;
+        index = inner.index;
+      } else {
+        output += "~~";
+        index += 2;
+      }
+      continue;
+    }
+
+    output += text[index];
+    index += 1;
+  }
+
+  return { text: output, index: text.length, closed: false };
+}
+
+function stripInlineMarkdown(text: string): string {
+  return stripInlineMarkdownRange(text).text;
+}
+
 export function renderEventDescriptionPlainText(source: string, context: EventDescriptionContext): string {
   const protectedLiterals: string[] = [];
   const protectLiteral = (value: string): string => {
@@ -146,19 +254,14 @@ export function renderEventDescriptionPlainText(source: string, context: EventDe
     return protectLiteral(resolved == null ? full : resolved);
   });
 
-  const stripped = valueProtected
+  const blockStripped = valueProtected
     .split(/\r?\n/)
     .map((line) => line
       .replace(/^\s{0,3}#{1,3}\s+/, "")
       .replace(/^\s*>\s?/, "")
       .replace(/^\s*[-*•]\s+/, "• "))
-    .join("\n")
-    .replace(/\*\*\*([^*\n]+)\*\*\*/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/\*([^*\n]+)\*/g, "$1")
-    .replace(/_([^_\n]+)_/g, "$1");
+    .join("\n");
+  const stripped = stripInlineMarkdown(blockStripped);
 
   return stripped.replace(/\uE000(\d+)\uE001/g, (full, index: string) => protectedLiterals[Number(index)] ?? full);
 }
