@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { getWorkspacePermissionSnapshot } from "@/lib/permissions";
 import { BracketViewer } from "@/components/bracket-viewer";
+import { BracketExportButton } from "@/components/bracket/bracket-export-button";
 
 type EventRow = RowDataPacket & {
   id: string;
@@ -89,7 +90,7 @@ export default async function EventBracketPage({ params }: { params: Promise<{ e
     <div className="section-stack competitive-view-page">
       <section className="page-heading">
         <div><span className="eyebrow">Competitive event</span><h1>{event.name} competition</h1><p>Follow the saved tournament results as the event progresses.</p></div>
-        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link>{event.bracket_entry_mode === "TEAM" ? <Link className="button button-secondary" href={`/dashboard/events/${eventId}/teams`}>Tournament teams</Link> : null}<Link className="button button-secondary" href={`/dashboard/events/${eventId}/matches`}>Match Center</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/series`}>Series Desk</Link>{canOperateMatches ? <Link className="button button-secondary" href={`/dashboard/events/${eventId}/control`}>Control Room</Link> : null}{canManageBracket ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage competition</Link> : null}</div>
+        <div className="button-row"><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link><BracketExportButton state={state} />{event.bracket_entry_mode === "TEAM" ? <Link className="button button-secondary" href={`/dashboard/events/${eventId}/teams`}>Tournament teams</Link> : null}<Link className="button button-secondary" href={`/dashboard/events/${eventId}/matches`}>Match Center</Link><Link className="button button-secondary" href={`/dashboard/events/${eventId}/series`}>Series Desk</Link>{canOperateMatches ? <Link className="button button-secondary" href={`/dashboard/events/${eventId}/control`}>Control Room</Link> : null}{canManageBracket ? <Link className="button" href={`/dashboard/tools/bracket?eventId=${eventId}`}>Manage competition</Link> : null}</div>
       </section>
       <section className="panel section-stack"><BracketViewer state={state} status={bracket.status} /></section>
     </div>
