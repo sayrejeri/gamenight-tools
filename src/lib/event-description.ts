@@ -140,7 +140,10 @@ export function renderEventDescriptionPlainText(source: string, context: EventDe
   const codeProtected = source.replace(/`([^`\n]+)`/g, (_full, inner: string) => protectLiteral(inner));
   const valueProtected = codeProtected.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => {
     const resolved = resolveEventDescriptionValue(key, context);
-    return resolved == null ? full : protectLiteral(resolved);
+    // Unknown variables are intentionally preserved on the web. Protect their full
+    // source token too so underscores/asterisks inside the key are never mistaken
+    // for Markdown while producing calendar/plain-text output.
+    return protectLiteral(resolved == null ? full : resolved);
   });
 
   const stripped = valueProtected
@@ -150,6 +153,7 @@ export function renderEventDescriptionPlainText(source: string, context: EventDe
       .replace(/^\s*>\s?/, "")
       .replace(/^\s*[-*•]\s+/, "• "))
     .join("\n")
+    .replace(/\*\*\*([^*\n]+)\*\*\*/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
     .replace(/~~([^~]+)~~/g, "$1")
