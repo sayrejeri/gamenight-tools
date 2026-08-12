@@ -67,6 +67,18 @@ const inlineCodePlain = description.renderEventDescriptionPlainText(
 );
 assert.equal(inlineCodePlain, "Inline a_b_c, **not bold**, and {{host}}; outside code: a_b_c.");
 
+const unknownTokenPlain = description.renderEventDescriptionPlainText(
+  "Unknown {{future_a_b}} and spaced {{ future_more_values }} stay literal.",
+  context,
+);
+assert.equal(unknownTokenPlain, "Unknown {{future_a_b}} and spaced {{ future_more_values }} stay literal.");
+
+const combinedEmphasisPlain = description.renderEventDescriptionPlainText(
+  "***Bold italic*** and **bold** plus *italic*.",
+  context,
+);
+assert.equal(combinedEmphasisPlain, "Bold italic and bold plus italic.");
+
 const capped = { ...context, maxParticipants: 32, cohosts: [] };
 assert.equal(description.resolveEventDescriptionValue("max_participants", capped), "32");
 assert.equal(description.resolveEventDescriptionValue("cohosts", capped), "None");
