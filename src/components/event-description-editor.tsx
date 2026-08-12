@@ -66,6 +66,38 @@ export function EventDescriptionEditor({
     });
   }
 
+  function applyBlockPrefix(prefix: string) {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      const separator = value.length > 0 && !value.endsWith("\n") ? "\n" : "";
+      commitValue(`${value}${separator}${prefix}`);
+      return;
+    }
+
+    const start = textarea.selectionStart ?? value.length;
+    const end = textarea.selectionEnd ?? start;
+    const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const effectiveEnd = end > start && value[end - 1] === "\n" ? end - 1 : end;
+    const nextLineBreak = value.indexOf("\n", effectiveEnd);
+    const lineEnd = nextLineBreak === -1 ? value.length : nextLineBreak;
+    const block = value.slice(lineStart, lineEnd);
+    const lines = block.split("\n");
+    const formatted = lines.map((line) => `${prefix}${line}`).join("\n");
+    const next = `${value.slice(0, lineStart)}${formatted}${value.slice(lineEnd)}`;
+    if (!commitValue(next)) return;
+
+    const addedBeforeStart = prefix.length;
+    const selectedLineBreaks = value.slice(lineStart, end).split("\n").length;
+    const addedBeforeEnd = prefix.length * selectedLineBreaks;
+    const nextStart = start + addedBeforeStart;
+    const nextEnd = end > start ? end + addedBeforeEnd : nextStart;
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextStart, nextEnd);
+    });
+  }
+
   const groups = ["Event", "Schedule", "People", "Competition"] as const;
 
   return (
@@ -76,9 +108,9 @@ export function EventDescriptionEditor({
         <button type="button" title="Underline: __text__" onClick={() => replaceSelection("__", "__")}><u>U</u></button>
         <button type="button" title="Strikethrough: ~~text~~" onClick={() => replaceSelection("~~", "~~")}><s>S</s></button>
         <button type="button" title="Inline code: `text`" onClick={() => replaceSelection("`", "`")}><code>&lt;/&gt;</code></button>
-        <button type="button" title="Heading" onClick={() => insertAtCursor("## ")}>H</button>
-        <button type="button" title="Bullet list" onClick={() => insertAtCursor("- ")}>• List</button>
-        <button type="button" title="Quote" onClick={() => insertAtCursor("> ")}>❯ Quote</button>
+        <button type="button" title="Heading" onClick={() => applyBlockPrefix("## ")}>H</button>
+        <button type="button" title="Bullet list" onClick={() => applyBlockPrefix("- ")}>• List</button>
+        <button type="button" title="Quote" onClick={() => applyBlockPrefix("> ")}>❯ Quote</button>
         <label className="event-description-variable-picker">
           <select aria-label="Insert dynamic event value" value="" onChange={(event) => { if (event.target.value) insertAtCursor(event.target.value); }}>
             <option value="">Insert value…</option>
