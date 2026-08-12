@@ -79,6 +79,15 @@ const combinedEmphasisPlain = description.renderEventDescriptionPlainText(
 );
 assert.equal(combinedEmphasisPlain, "Bold italic and bold plus italic.");
 
+const nestedEmphasisPlain = description.renderEventDescriptionPlainText(
+  "**bold and *italic*** plus *italic and **bold***, __underline and _italic___, and _italic and __underline___.",
+  context,
+);
+assert.equal(
+  nestedEmphasisPlain,
+  "bold and italic plus italic and bold, underline and italic, and italic and underline.",
+);
+
 const capped = { ...context, maxParticipants: 32, cohosts: [] };
 assert.equal(description.resolveEventDescriptionValue("max_participants", capped), "32");
 assert.equal(description.resolveEventDescriptionValue("cohosts", capped), "None");
