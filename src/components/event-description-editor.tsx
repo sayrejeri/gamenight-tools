@@ -87,8 +87,8 @@ export function EventDescriptionEditor({
     if (!commitValue(next)) return;
 
     const addedBeforeStart = prefix.length;
-    const selectedLineBreaks = value.slice(lineStart, end).split("\n").length;
-    const addedBeforeEnd = prefix.length * selectedLineBreaks;
+    const selectedLineCount = value.slice(lineStart, effectiveEnd).split("\n").length;
+    const addedBeforeEnd = prefix.length * selectedLineCount;
     const nextStart = start + addedBeforeStart;
     const nextEnd = end > start ? end + addedBeforeEnd : nextStart;
 
