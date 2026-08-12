@@ -67,6 +67,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
   const [description, setDescription] = useState(initial.description);
   const [platformName, setPlatformName] = useState(initial.platformName);
   const [subgameName, setSubgameName] = useState(initial.subgameName);
+  const [gameFieldsTouched, setGameFieldsTouched] = useState(false);
   const [gameUrl, setGameUrl] = useState(initial.gameUrl);
   const [gameExternalId, setGameExternalId] = useState(initial.gameExternalId);
   const [gameUniverseId, setGameUniverseId] = useState(initial.gameUniverseId);
@@ -102,6 +103,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
       const response = await fetch(`/api/roblox/game?value=${encodeURIComponent(gameUrl)}`);
       const body = await response.json() as { error?: string; game?: { placeId: string; universeId: string | null; name: string; gameUrl: string; thumbnailUrl: string | null } };
       if (!response.ok || !body.game) throw new Error(body.error ?? "Roblox game could not be imported.");
+      setGameFieldsTouched(true);
       setPlatformName("Roblox"); setSubgameName(body.game.name); setGameUrl(body.game.gameUrl); setGameExternalId(body.game.placeId); setGameUniverseId(body.game.universeId ?? ""); setGameThumbnailUrl(body.game.thumbnailUrl ?? ""); setRequiredConnectionType((current) => current || "Roblox");
       setMessage("Roblox game details and thumbnail refreshed.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Roblox game could not be imported."); }
@@ -144,7 +146,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
     checkInOpensAt: localIso(dates.checkInOpensAt),
     checkInDeadline: localIso(dates.checkInDeadline),
     timezone,
-    game: subgameName || initial.legacyGameName || platformName,
+    game: subgameName || platformName || (!gameFieldsTouched ? initial.legacyGameName : ""),
     platform: platformName,
     format: bracketEnabled ? bracketFormat : null,
     entrantMode: bracketEntryMode,
@@ -162,8 +164,8 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
     <div className="form-stack">
       <label htmlFor="edit-event-name">Event name</label><input id="edit-event-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={160} required />
       <div className="two-column">
-        <div className="form-stack compact"><label htmlFor="edit-platform">Main category / platform</label><input id="edit-platform" list="edit-platform-options" value={platformName} onChange={(event) => setPlatformName(event.target.value)} /><datalist id="edit-platform-options"><option value="Roblox" /><option value="Minecraft" /><option value="Fortnite" /><option value="Steam" /><option value="Other" /></datalist></div>
-        <div className="form-stack compact"><label htmlFor="edit-subgame">Game inside the platform</label><input id="edit-subgame" value={subgameName} onChange={(event) => setSubgameName(event.target.value)} /></div>
+        <div className="form-stack compact"><label htmlFor="edit-platform">Main category / platform</label><input id="edit-platform" list="edit-platform-options" value={platformName} onChange={(event) => { setGameFieldsTouched(true); setPlatformName(event.target.value); }} /><datalist id="edit-platform-options"><option value="Roblox" /><option value="Minecraft" /><option value="Fortnite" /><option value="Steam" /><option value="Other" /></datalist></div>
+        <div className="form-stack compact"><label htmlFor="edit-subgame">Game inside the platform</label><input id="edit-subgame" value={subgameName} onChange={(event) => { setGameFieldsTouched(true); setSubgameName(event.target.value); }} /></div>
       </div>
       <label htmlFor="edit-game-url">{isRoblox ? "Roblox game link or Place ID" : "Game link"}</label>
       <div className="inline-form"><input id="edit-game-url" value={gameUrl} onChange={(event) => setGameUrl(event.target.value)} />{isRoblox ? <button className="button button-secondary" type="button" disabled={importing || !gameUrl.trim()} onClick={importRobloxGame}>{importing ? "Importing…" : "Refresh from Roblox"}</button> : null}</div>
