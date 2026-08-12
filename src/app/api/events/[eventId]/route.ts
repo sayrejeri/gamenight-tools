@@ -29,6 +29,9 @@ type EventAccessRow = RowDataPacket & {
   workspace_id: string;
   primary_host_id: string;
   status: string;
+  game_name: string | null;
+  platform_name: string | null;
+  subgame_name: string | null;
   bracket_enabled: number;
   bracket_format: string | null;
   bracket_entry_mode: string;
@@ -48,7 +51,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   if (!parsed.success) return NextResponse.json({ error: "Invalid event information.", details: parsed.error.flatten() }, { status: 400 });
 
   const rows = await query<EventAccessRow[]>(
-    `SELECT workspace_id, primary_host_id, status, bracket_enabled, bracket_format, bracket_entry_mode,
+    `SELECT workspace_id, primary_host_id, status, game_name, platform_name, subgame_name, bracket_enabled, bracket_format, bracket_entry_mode,
             bracket_seeding_mode, bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode
      FROM events WHERE id = ? LIMIT 1`,
     [eventId],
@@ -67,7 +70,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0 ? parsed.data.maxParticipants : null;
   const bracketFormat = parsed.data.bracketEnabled ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION" : null;
   const seedingMode = parsed.data.bracketEnabled ? parsed.data.bracketSeedingMode ?? "RANDOM" : null;
-  const gameName = parsed.data.subgameName || parsed.data.platformName || null;
+  const preserveLegacyGame = !parsed.data.subgameName && !parsed.data.platformName && !event.subgame_name && !event.platform_name;
+  const gameName = parsed.data.subgameName || parsed.data.platformName || (preserveLegacyGame ? event.game_name : null);
   const requireCheckIn = parsed.data.bracketEntryMode === "PLAYER" && parsed.data.bracketRequireCheckIn;
   const competitionChanged = Boolean(parsed.data.bracketEnabled) !== Boolean(event.bracket_enabled)
     || bracketFormat !== event.bracket_format
