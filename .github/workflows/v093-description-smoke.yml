@@ -13,6 +13,7 @@ on:
       - "src/app/dashboard/workspaces/[workspaceId]/page.tsx"
       - "src/app/spectate/[token]/page.tsx"
       - "src/app/api/events/[eventId]/calendar/route.ts"
+      - "src/app/expanded.css"
       - "tests/v093-description-smoke.cjs"
       - ".github/workflows/v093-description-smoke.yml"
   workflow_dispatch:
@@ -29,9 +30,9 @@ permissions:
 jobs:
   description-smoke:
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Clone requested ref and run description smoke tests
+      - name: Clone requested ref and run v0.9.3 release checks
         shell: powershell
         env:
           REQUESTED_REF: ${{ inputs.ref }}
@@ -74,3 +75,9 @@ jobs:
           if (-not $compiled) { throw "Compiled event-description.js was not found." }
           node "tests/v093-description-smoke.cjs" "$($compiled.FullName)"
           if ($LASTEXITCODE -ne 0) { throw "v0.9.3 description smoke tests failed." }
+
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript typecheck failed." }
+
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Production build failed." }
