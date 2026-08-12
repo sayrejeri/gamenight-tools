@@ -11,6 +11,7 @@ type InitialEvent = {
   description: string;
   platformName: string;
   subgameName: string;
+  legacyGameName: string;
   gameUrl: string;
   gameExternalId: string;
   gameUniverseId: string;
@@ -143,7 +144,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
     checkInOpensAt: localIso(dates.checkInOpensAt),
     checkInDeadline: localIso(dates.checkInDeadline),
     timezone,
-    game: subgameName || platformName,
+    game: subgameName || initial.legacyGameName || platformName,
     platform: platformName,
     format: bracketEnabled ? bracketFormat : null,
     entrantMode: bracketEnabled ? bracketEntryMode : null,
