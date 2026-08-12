@@ -8,6 +8,7 @@ import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connectio
 import { CohostInviteForm } from "@/components/cohost-invite-form";
 import { CohostManager } from "@/components/cohost-manager";
 import { DuplicateEventButton } from "@/components/duplicate-event-button";
+import { EventDescription } from "@/components/event-description";
 import { EventHostingSettings } from "@/components/event-hosting-settings";
 import { EventShareLinkControls } from "@/components/event-share-link-controls";
 import { EventStatusControls } from "@/components/event-status-controls";
@@ -141,12 +142,32 @@ export default async function EventPage({ params }: { params: Promise<{ eventId:
     status: cohost.status,
     expiresAt: iso(cohost.expires_at),
   }));
+  const descriptionContext = {
+    eventName: event.name,
+    eventStart: iso(event.starts_at),
+    signupDeadline: iso(event.signup_deadline),
+    checkInOpensAt: iso(event.check_in_opens_at),
+    checkInDeadline: iso(event.check_in_deadline),
+    timezone: event.timezone,
+    game: event.subgame_name ?? event.game_name ?? event.platform_name,
+    platform: event.platform_name,
+    format: event.bracket_enabled ? event.bracket_format : null,
+    entrantMode: event.bracket_entry_mode,
+    seedingMode: event.bracket_seeding_mode,
+    status: event.status,
+    visibility: event.visibility,
+    host: event.primary_host_name,
+    cohosts: cohosts.filter((cohost) => cohost.status === "ACCEPTED").map((cohost) => cohost.global_name ?? cohost.site_username ?? cohost.username ?? `Discord ${cohost.invited_discord_id}`),
+    participants: event.bracket_entry_mode === "TEAM" ? teamCount : approvedCount,
+    maxParticipants: event.max_participants,
+    workspace: event.workspace_name,
+  };
 
   return (
     <div className="section-stack">
       <section className="event-hero">
         {event.game_thumbnail_url ? <img className="event-hero-image" src={event.game_thumbnail_url} alt="" /> : null}
-        <div className="event-hero-content"><span className="eyebrow">{event.workspace_name}</span><h1>{event.name}</h1><p>{event.description ?? "No event description has been added yet."}</p><div className="button-row"><span className="badge">{event.status.replaceAll("_", " ")}</span>{event.platform_name ? <span className="badge">{event.platform_name}</span> : null}{event.subgame_name ? <span className="badge">{event.subgame_name}</span> : null}{event.bracket_entry_mode === "TEAM" ? <span className="badge">Team tournament</span> : null}</div></div>
+        <div className="event-hero-content"><span className="eyebrow">{event.workspace_name}</span><h1>{event.name}</h1><EventDescription text={event.description} context={descriptionContext} className="event-hero-description" /><div className="button-row"><span className="badge">{event.status.replaceAll("_", " ")}</span>{event.platform_name ? <span className="badge">{event.platform_name}</span> : null}{event.subgame_name ? <span className="badge">{event.subgame_name}</span> : null}{event.bracket_entry_mode === "TEAM" ? <span className="badge">Team tournament</span> : null}</div></div>
       </section>
 
       {event.status === "CANCELLED" && event.cancellation_reason ? <section className="event-cancelled-banner"><strong>Event cancelled</strong><span>{event.cancellation_reason}</span>{event.cancelled_at ? <small>Cancelled {new Date(event.cancelled_at).toLocaleString()}</small> : null}</section> : null}
