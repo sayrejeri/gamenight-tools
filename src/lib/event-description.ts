@@ -59,6 +59,34 @@ export const EVENT_DESCRIPTION_DATE_KEYS = new Set([
   "event.checkin_close",
 ]);
 
+function underscoreRunBounds(text: string, index: number): { start: number; end: number } {
+  let start = index;
+  let end = index;
+  while (start > 0 && text[start - 1] === "_") start -= 1;
+  while (end < text.length && text[end] === "_") end += 1;
+  return { start, end };
+}
+
+function isWordLike(value: string | undefined): boolean {
+  return Boolean(value && /[A-Za-z0-9_]/.test(value));
+}
+
+export function canOpenUnderscoreEmphasis(text: string, index: number): boolean {
+  const { start, end } = underscoreRunBounds(text, index);
+  const before = start > 0 ? text[start - 1] : undefined;
+  const after = text[end];
+  if (!after || /\s/.test(after)) return false;
+  return !isWordLike(before);
+}
+
+export function canCloseUnderscoreEmphasis(text: string, index: number): boolean {
+  const { start, end } = underscoreRunBounds(text, index);
+  const before = start > 0 ? text[start - 1] : undefined;
+  const after = text[end];
+  if (!before || /\s/.test(before)) return false;
+  return !isWordLike(after);
+}
+
 function cleanLabel(value: string | null | undefined, fallback = "Not set"): string {
   if (!value?.trim()) return fallback;
   return value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -125,143 +153,4 @@ export function resolveEventDescriptionValue(key: string, context: EventDescript
 
 export function interpolateEventDescription(source: string, context: EventDescriptionContext): string {
   return source.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => resolveEventDescriptionValue(key, context) ?? full);
-}
-
-type PlainInlineParseResult = { text: string; index: number; closed: boolean };
-
-function plainDelimiterRunLength(text: string, index: number, delimiter: "*" | "_"): number {
-  let length = 0;
-  while (text[index + length] === delimiter) length += 1;
-  return length;
-}
-
-function plainClosesAt(text: string, index: number, marker: string): boolean {
-  if (marker === "*" || marker === "_") {
-    const run = plainDelimiterRunLength(text, index, marker);
-    return run === 1 || run >= 3;
-  }
-  return text.startsWith(marker, index);
-}
-
-function stripInlineMarkdownRange(text: string, start = 0, closeMarker?: string): PlainInlineParseResult {
-  let output = "";
-  let index = start;
-
-  while (index < text.length) {
-    if (closeMarker && plainClosesAt(text, index, closeMarker)) {
-      return { text: output, index: index + closeMarker.length, closed: true };
-    }
-
-    if (text.startsWith("***", index)) {
-      const innerItalic = stripInlineMarkdownRange(text, index + 3, "*");
-      if (innerItalic.closed && text.startsWith("**", innerItalic.index)) {
-        output += innerItalic.text;
-        index = innerItalic.index + 2;
-      } else {
-        output += "***";
-        index += 3;
-      }
-      continue;
-    }
-
-    if (text.startsWith("**", index)) {
-      const inner = stripInlineMarkdownRange(text, index + 2, "**");
-      if (inner.closed) {
-        output += inner.text;
-        index = inner.index;
-      } else {
-        output += "**";
-        index += 2;
-      }
-      continue;
-    }
-
-    if (text[index] === "*") {
-      const inner = stripInlineMarkdownRange(text, index + 1, "*");
-      if (inner.closed) {
-        output += inner.text;
-        index = inner.index;
-      } else {
-        output += "*";
-        index += 1;
-      }
-      continue;
-    }
-
-    if (text.startsWith("__", index)) {
-      const inner = stripInlineMarkdownRange(text, index + 2, "__");
-      if (inner.closed) {
-        output += inner.text;
-        index = inner.index;
-      } else {
-        output += "__";
-        index += 2;
-      }
-      continue;
-    }
-
-    if (text[index] === "_") {
-      const inner = stripInlineMarkdownRange(text, index + 1, "_");
-      if (inner.closed) {
-        output += inner.text;
-        index = inner.index;
-      } else {
-        output += "_";
-        index += 1;
-      }
-      continue;
-    }
-
-    if (text.startsWith("~~", index)) {
-      const inner = stripInlineMarkdownRange(text, index + 2, "~~");
-      if (inner.closed) {
-        output += inner.text;
-        index = inner.index;
-      } else {
-        output += "~~";
-        index += 2;
-      }
-      continue;
-    }
-
-    output += text[index];
-    index += 1;
-  }
-
-  return { text: output, index: text.length, closed: false };
-}
-
-function stripInlineMarkdown(text: string): string {
-  return stripInlineMarkdownRange(text).text;
-}
-
-export function renderEventDescriptionPlainText(source: string, context: EventDescriptionContext): string {
-  const protectedLiterals: string[] = [];
-  const protectLiteral = (value: string): string => {
-    const marker = `\uE000${protectedLiterals.length}\uE001`;
-    protectedLiterals.push(value);
-    return marker;
-  };
-
-  // Match the web renderer: inline-code contents are literal. Protect them before
-  // resolving variables or stripping any other supported Markdown delimiters.
-  const codeProtected = source.replace(/`([^`\n]+)`/g, (_full, inner: string) => protectLiteral(inner));
-  const valueProtected = codeProtected.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => {
-    const resolved = resolveEventDescriptionValue(key, context);
-    // Unknown variables are intentionally preserved on the web. Protect their full
-    // source token too so underscores/asterisks inside the key are never mistaken
-    // for Markdown while producing calendar/plain-text output.
-    return protectLiteral(resolved == null ? full : resolved);
-  });
-
-  const blockStripped = valueProtected
-    .split(/\r?\n/)
-    .map((line) => line
-      .replace(/^\s{0,3}#{1,3}\s+/, "")
-      .replace(/^\s*>\s?/, "")
-      .replace(/^\s*[-*•]\s+/, "• "))
-    .join("\n");
-  const stripped = stripInlineMarkdown(blockStripped);
-
-  return stripped.replace(/\uE000(\d+)\uE001/g, (full, index: string) => protectedLiterals[Number(index)] ?? full);
 }

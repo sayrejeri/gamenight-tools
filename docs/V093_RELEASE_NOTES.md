@@ -47,7 +47,7 @@ Unknown values remain visibly unresolved rather than silently disappearing.
 
 ## Localized schedule values
 
-Schedule variables on rendered web pages use the viewer's browser timezone automatically, with the event timezone as fallback. Calendar exports resolve the same description source to safe plain text using the event's official timezone.
+Schedule variables on rendered web pages use the viewer's browser timezone automatically, with the event timezone as fallback.
 
 ## Description editor
 
@@ -68,7 +68,7 @@ No private notes, access codes, result proof, dispute evidence, or private accou
 
 ## Calendar exports
 
-ICS descriptions resolve supported event values and strip the supported Markdown markers to readable plain text. Existing event-view authorization remains unchanged.
+Calendar downloads are intentionally minimal. The ICS event includes the event title and start time only; descriptions, game links, event links, location/workspace text, and rich-description variables are not exported. Existing event-view authorization remains unchanged.
 
 ## Database
 

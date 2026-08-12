@@ -1,9 +1,12 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const compiledPath = process.argv[2];
-if (!compiledPath) throw new Error("Pass the compiled event-description.js path as argv[2].");
-const description = require(path.resolve(compiledPath));
+const descriptionCompiledPath = process.argv[2];
+const gameCompiledPath = process.argv[3];
+if (!descriptionCompiledPath) throw new Error("Pass the compiled event-description.js path as argv[2].");
+if (!gameCompiledPath) throw new Error("Pass the compiled event-game.js path as argv[3].");
+const description = require(path.resolve(descriptionCompiledPath));
+const eventGame = require(path.resolve(gameCompiledPath));
 
 const context = {
   eventName: "Villagism PvP Tournament",
@@ -45,51 +48,62 @@ const interpolated = description.interpolateEventDescription(
 );
 assert.equal(interpolated, "Hosted by Jeremiah in Villagism. 7 / Unlimited. {{unknown.value}}");
 
-const plain = description.renderEventDescriptionPlainText(
-  "# **Tournament**\n\n- *One loss*\n- __Random seeding__\n\n> Hosted by {{host}}\nUse `{{event.format}}` and ~~fight~~ compete.",
-  context,
+assert.equal(description.canOpenUnderscoreEmphasis("_italic_", 0), true);
+assert.equal(description.canCloseUnderscoreEmphasis("_italic_", 7), true);
+assert.equal(description.canOpenUnderscoreEmphasis("foo _italic_ bar", 4), true);
+assert.equal(description.canOpenUnderscoreEmphasis("game_mode_value", 4), false);
+assert.equal(description.canOpenUnderscoreEmphasis("a_b_c", 1), false);
+assert.equal(description.canOpenUnderscoreEmphasis("https://example.test/a_b_c", 22), false);
+assert.equal(description.canOpenUnderscoreEmphasis("__underline__", 0), true);
+assert.equal(description.canCloseUnderscoreEmphasis("__underline__", 11), true);
+
+assert.equal(
+  eventGame.resolveUpdatedGameName({
+    submittedSubgameName: null,
+    submittedPlatformName: null,
+    gameFieldsTouched: false,
+    existingGameName: "Legacy Game",
+    existingPlatformName: null,
+    existingSubgameName: null,
+  }),
+  "Legacy Game",
 );
 assert.equal(
-  plain,
-  "Tournament\n\n• One loss\n• Random seeding\n\nHosted by Jeremiah\nUse {{event.format}} and fight compete.",
-);
-
-const literalValueContext = { ...context, host: "a_b_c", cohosts: ["*Ace*", "Tick`Tock", "~~Ref~~"] };
-const literalValuePlain = description.renderEventDescriptionPlainText(
-  "**Host:** {{host}}\n**Co-hosts:** {{cohosts}}",
-  literalValueContext,
-);
-assert.equal(literalValuePlain, "Host: a_b_c\nCo-hosts: *Ace*, Tick`Tock, ~~Ref~~");
-
-const inlineCodePlain = description.renderEventDescriptionPlainText(
-  "Inline `a_b_c`, `**not bold**`, and `{{host}}`; outside code: {{host}}.",
-  literalValueContext,
-);
-assert.equal(inlineCodePlain, "Inline a_b_c, **not bold**, and {{host}}; outside code: a_b_c.");
-
-const unknownTokenPlain = description.renderEventDescriptionPlainText(
-  "Unknown {{future_a_b}} and spaced {{ future_more_values }} stay literal.",
-  context,
-);
-assert.equal(unknownTokenPlain, "Unknown {{future_a_b}} and spaced {{ future_more_values }} stay literal.");
-
-const combinedEmphasisPlain = description.renderEventDescriptionPlainText(
-  "***Bold italic*** and **bold** plus *italic*.",
-  context,
-);
-assert.equal(combinedEmphasisPlain, "Bold italic and bold plus italic.");
-
-const nestedEmphasisPlain = description.renderEventDescriptionPlainText(
-  "**bold and *italic*** plus *italic and **bold***, __underline and _italic___, and _italic and __underline___.",
-  context,
+  eventGame.resolveUpdatedGameName({
+    submittedSubgameName: null,
+    submittedPlatformName: null,
+    gameFieldsTouched: true,
+    existingGameName: "Legacy Game",
+    existingPlatformName: null,
+    existingSubgameName: null,
+  }),
+  null,
 );
 assert.equal(
-  nestedEmphasisPlain,
-  "bold and italic plus italic and bold, underline and italic, and italic and underline.",
+  eventGame.resolveUpdatedGameName({
+    submittedSubgameName: "Current Game",
+    submittedPlatformName: "Roblox",
+    gameFieldsTouched: true,
+    existingGameName: "Legacy Game",
+    existingPlatformName: null,
+    existingSubgameName: null,
+  }),
+  "Current Game",
+);
+assert.equal(
+  eventGame.resolveUpdatedGameName({
+    submittedSubgameName: null,
+    submittedPlatformName: "Roblox",
+    gameFieldsTouched: true,
+    existingGameName: "Legacy Game",
+    existingPlatformName: null,
+    existingSubgameName: null,
+  }),
+  "Roblox",
 );
 
 const capped = { ...context, maxParticipants: 32, cohosts: [] };
 assert.equal(description.resolveEventDescriptionValue("max_participants", capped), "32");
 assert.equal(description.resolveEventDescriptionValue("cohosts", capped), "None");
 
-console.log("v0.9.3 event description smoke tests passed");
+console.log("v0.9.3 event description and legacy-game smoke tests passed");

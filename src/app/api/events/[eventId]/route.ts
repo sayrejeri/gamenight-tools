@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
+import { resolveUpdatedGameName } from "@/lib/event-game";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -12,6 +13,7 @@ const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBL
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(160), description: z.string().trim().max(5000).nullable().optional(),
   platformName: z.string().trim().max(80).nullable().optional(), subgameName: z.string().trim().max(191).nullable().optional(),
+  gameFieldsTouched: z.boolean().default(false),
   gameUrl: optionalUrl, gameExternalId: z.string().trim().max(80).nullable().optional(), gameUniverseId: z.string().trim().max(80).nullable().optional(),
   gameThumbnailUrl: optionalUrl, requiredConnectionType: z.string().trim().max(50).nullable().optional(),
   startsAt: z.string().datetime().nullable().optional(), signupDeadline: z.string().datetime().nullable().optional(),
@@ -70,8 +72,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0 ? parsed.data.maxParticipants : null;
   const bracketFormat = parsed.data.bracketEnabled ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION" : null;
   const seedingMode = parsed.data.bracketEnabled ? parsed.data.bracketSeedingMode ?? "RANDOM" : null;
-  const preserveLegacyGame = !parsed.data.subgameName && !parsed.data.platformName && !event.subgame_name && !event.platform_name;
-  const gameName = parsed.data.subgameName || parsed.data.platformName || (preserveLegacyGame ? event.game_name : null);
+  const gameName = resolveUpdatedGameName({
+    submittedSubgameName: parsed.data.subgameName,
+    submittedPlatformName: parsed.data.platformName,
+    gameFieldsTouched: parsed.data.gameFieldsTouched,
+    existingGameName: event.game_name,
+    existingPlatformName: event.platform_name,
+    existingSubgameName: event.subgame_name,
+  });
   const requireCheckIn = parsed.data.bracketEntryMode === "PLAYER" && parsed.data.bracketRequireCheckIn;
   const competitionChanged = Boolean(parsed.data.bracketEnabled) !== Boolean(event.bracket_enabled)
     || bracketFormat !== event.bracket_format

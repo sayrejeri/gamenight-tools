@@ -42,14 +42,16 @@ Verify:
 - existing event descriptions still preserve paragraphs/blank lines
 - create/edit description toolbar and live preview load
 - bold/italic/underline/strike/code/headings/lists/quotes render correctly
+- literal identifiers/URLs such as `game_mode_value` and `a_b_c` keep their underscores
 - `{{event.start}}` and other schedule values localize in the browser
 - tournament-format/host/co-host/entrant variables resolve
 - `$10,000` and other normal currency text remains unchanged
 - unknown variables remain visible
 - HTML/script-looking description text stays inert
 - spectator pre-live/postponed/cancelled/live behavior remains correct
-- authorized calendar export resolves descriptions to plain text
+- authorized calendar export contains only the event title and start time
 - restricted calendar/event access remains protected
+- untouched legacy-only game names are preserved, while an explicit clear stays cleared
 
 ## Rollback
 
