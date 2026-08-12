@@ -35,6 +35,14 @@ type InitialEvent = {
   bracketTiebreakMode: "HEAD_TO_HEAD_THEN_SEED" | "SEED";
 };
 
+type EditPreviewContext = {
+  status: string;
+  host: string;
+  cohosts: string[];
+  participants: number;
+  workspace: string;
+};
+
 type DateFields = { startsAt: string; signupDeadline: string; checkInOpensAt: string; checkInDeadline: string };
 
 function toLocalInput(value: string | null): string {
@@ -51,7 +59,7 @@ function localIso(value: string): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-export function EditEventForm({ eventId, initial }: { eventId: string; initial: InitialEvent }) {
+export function EditEventForm({ eventId, initial, preview }: { eventId: string; initial: InitialEvent; preview: EditPreviewContext }) {
   const router = useRouter();
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
@@ -139,13 +147,13 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
     format: bracketEnabled ? bracketFormat : null,
     entrantMode: bracketEnabled ? bracketEntryMode : null,
     seedingMode: bracketEnabled ? bracketSeedingMode : null,
-    status: "CURRENT",
+    status: preview.status,
     visibility,
-    host: "Primary host",
-    cohosts: [],
-    participants: 0,
+    host: preview.host,
+    cohosts: preview.cohosts,
+    participants: preview.participants,
     maxParticipants: Number.isFinite(maxPreview) ? maxPreview : 0,
-    workspace: "Current server",
+    workspace: preview.workspace,
   };
 
   return (
