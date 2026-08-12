@@ -128,8 +128,16 @@ export function interpolateEventDescription(source: string, context: EventDescri
 }
 
 export function renderEventDescriptionPlainText(source: string, context: EventDescriptionContext): string {
-  const interpolated = interpolateEventDescription(source, context);
-  return interpolated
+  const protectedValues: string[] = [];
+  const protectedSource = source.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => {
+    const resolved = resolveEventDescriptionValue(key, context);
+    if (resolved == null) return full;
+    const marker = `\uE000${protectedValues.length}\uE001`;
+    protectedValues.push(resolved);
+    return marker;
+  });
+
+  const stripped = protectedSource
     .split(/\r?\n/)
     .map((line) => line
       .replace(/^\s{0,3}#{1,3}\s+/, "")
@@ -142,4 +150,6 @@ export function renderEventDescriptionPlainText(source: string, context: EventDe
     .replace(/~~([^~]+)~~/g, "$1")
     .replace(/\*([^*\n]+)\*/g, "$1")
     .replace(/_([^_\n]+)_/g, "$1");
+
+  return stripped.replace(/\uE000(\d+)\uE001/g, (full, index: string) => protectedValues[Number(index)] ?? full);
 }
