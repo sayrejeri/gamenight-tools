@@ -17,6 +17,12 @@ type EventRow = RowDataPacket & {
   bracket_auto_generate: number; bracket_require_check_in: number; bracket_group_count: number;
   bracket_advancers_per_group: number; bracket_tiebreak_mode: "HEAD_TO_HEAD_THEN_SEED" | "SEED";
 };
+type PreviewRow = RowDataPacket & {
+  workspace_name: string;
+  primary_host_name: string;
+  cohost_names: string | null;
+  entrant_count: number;
+};
 
 export default async function EditEventPage({ params }: { params: Promise<{ eventId: string }> }) {
   const session = await requireSession();
@@ -30,10 +36,34 @@ export default async function EditEventPage({ params }: { params: Promise<{ even
   const allowed = event.primary_host_id === session.userId || await hasWorkspacePermission(session.userId, event.workspace_id, "MANAGE_EVENTS") || cohost[0]?.permission_level === "FULL";
   if (!allowed) notFound();
 
+  const previewRows = await query<PreviewRow[]>(
+    `SELECT w.name AS workspace_name,
+            COALESCE(host.global_name, host.username) AS primary_host_name,
+            (SELECT GROUP_CONCAT(COALESCE(cu.global_name, cu.username) ORDER BY ec.created_at SEPARATOR '|||')
+             FROM event_cohosts ec INNER JOIN users cu ON cu.id = ec.invited_user_id
+             WHERE ec.event_id = e.id AND ec.status = 'ACCEPTED') AS cohost_names,
+            CASE WHEN e.bracket_entry_mode = 'TEAM'
+              THEN (SELECT COUNT(*) FROM event_team_entries ete WHERE ete.event_id = e.id AND ete.status = 'REGISTERED')
+              ELSE (SELECT COUNT(*) FROM event_participants ep WHERE ep.event_id = e.id AND ep.status = 'APPROVED')
+            END AS entrant_count
+     FROM events e
+     INNER JOIN workspaces w ON w.id = e.workspace_id
+     INNER JOIN users host ON host.id = e.primary_host_id
+     WHERE e.id = ? LIMIT 1`,
+    [eventId],
+  );
+  const preview = previewRows[0];
+
   return (
     <div className="section-stack">
       <section className="page-heading"><div><span className="eyebrow">Event setup</span><h1>Edit {event.name}</h1><p>Changes save to the existing event. Changing competition structure resets the generated competition before it goes live.</p></div><Link className="button button-secondary" href={`/dashboard/events/${eventId}`}>Back to event</Link></section>
-      <section className="panel"><EditEventForm eventId={eventId} initial={{
+      <section className="panel"><EditEventForm eventId={eventId} preview={{
+        status: event.status,
+        host: preview?.primary_host_name ?? "Host",
+        cohosts: preview?.cohost_names ? preview.cohost_names.split("|||").filter(Boolean) : [],
+        participants: Number(preview?.entrant_count ?? 0),
+        workspace: preview?.workspace_name ?? "Server",
+      }} initial={{
         name: event.name, description: event.description ?? "", platformName: event.platform_name ?? "", subgameName: event.subgame_name ?? "",
         gameUrl: event.game_url ?? "", gameExternalId: event.game_external_id ?? "", gameUniverseId: event.game_universe_id ?? "",
         gameThumbnailUrl: event.game_thumbnail_url ?? "", requiredConnectionType: event.required_connection_type ?? "",
