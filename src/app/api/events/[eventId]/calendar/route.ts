@@ -15,10 +15,7 @@ function formatIcsDate(value: Date): string {
 type EventRow = RowDataPacket & {
   id: string;
   name: string;
-  description: string | null;
   starts_at: Date | null;
-  game_url: string | null;
-  workspace_name: string;
 };
 
 export async function GET(
@@ -32,18 +29,13 @@ export async function GET(
   if (!access.event || !access.canView) return NextResponse.json({ error: "Event not found." }, { status: 404 });
 
   const events = await query<EventRow[]>(
-    `SELECT e.id, e.name, e.description, e.starts_at, e.game_url, w.name AS workspace_name
-     FROM events e INNER JOIN workspaces w ON w.id = e.workspace_id
-     WHERE e.id = ? LIMIT 1`,
+    `SELECT id, name, starts_at FROM events WHERE id = ? LIMIT 1`,
     [eventId],
   );
   const event = events[0];
   if (!event || !event.starts_at) return NextResponse.json({ error: "This event has no start time." }, { status: 404 });
 
   const start = new Date(event.starts_at);
-  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  const appUrl = process.env.APP_URL ?? "https://gamenights.sayrejeri.com";
-  const description = [event.description, event.game_url, `${appUrl}/dashboard/events/${event.id}`].filter(Boolean).join("\n\n");
   const ics = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -53,11 +45,7 @@ export async function GET(
     `UID:${event.id}@gamenights.sayrejeri.com`,
     `DTSTAMP:${formatIcsDate(new Date())}`,
     `DTSTART:${formatIcsDate(start)}`,
-    `DTEND:${formatIcsDate(end)}`,
     `SUMMARY:${escapeIcs(event.name)}`,
-    `DESCRIPTION:${escapeIcs(description)}`,
-    `LOCATION:${escapeIcs(event.workspace_name)}`,
-    `URL:${appUrl}/dashboard/events/${event.id}`,
     "END:VEVENT",
     "END:VCALENDAR",
     "",

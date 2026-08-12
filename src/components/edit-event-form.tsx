@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { EventDescriptionEditor } from "@/components/event-description-editor";
 
 type BracketFormat = "SINGLE_ELIMINATION" | "THREE_PLAYER" | "DOUBLE_ELIMINATION" | "ROUND_ROBIN" | "GROUPS_PLAYOFFS";
 
@@ -10,6 +11,7 @@ type InitialEvent = {
   description: string;
   platformName: string;
   subgameName: string;
+  legacyGameName: string;
   gameUrl: string;
   gameExternalId: string;
   gameUniverseId: string;
@@ -34,6 +36,15 @@ type InitialEvent = {
   bracketTiebreakMode: "HEAD_TO_HEAD_THEN_SEED" | "SEED";
 };
 
+type EditPreviewContext = {
+  status: string;
+  host: string;
+  cohosts: string[];
+  playerParticipants: number;
+  teamParticipants: number;
+  workspace: string;
+};
+
 type DateFields = { startsAt: string; signupDeadline: string; checkInOpensAt: string; checkInDeadline: string };
 
 function toLocalInput(value: string | null): string {
@@ -44,12 +55,19 @@ function toLocalInput(value: string | null): string {
   return local.toISOString().slice(0, 16);
 }
 
-export function EditEventForm({ eventId, initial }: { eventId: string; initial: InitialEvent }) {
+function localIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+export function EditEventForm({ eventId, initial, preview }: { eventId: string; initial: InitialEvent; preview: EditPreviewContext }) {
   const router = useRouter();
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
   const [platformName, setPlatformName] = useState(initial.platformName);
   const [subgameName, setSubgameName] = useState(initial.subgameName);
+  const [gameFieldsTouched, setGameFieldsTouched] = useState(false);
   const [gameUrl, setGameUrl] = useState(initial.gameUrl);
   const [gameExternalId, setGameExternalId] = useState(initial.gameExternalId);
   const [gameUniverseId, setGameUniverseId] = useState(initial.gameUniverseId);
@@ -85,6 +103,7 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
       const response = await fetch(`/api/roblox/game?value=${encodeURIComponent(gameUrl)}`);
       const body = await response.json() as { error?: string; game?: { placeId: string; universeId: string | null; name: string; gameUrl: string; thumbnailUrl: string | null } };
       if (!response.ok || !body.game) throw new Error(body.error ?? "Roblox game could not be imported.");
+      setGameFieldsTouched(true);
       setPlatformName("Roblox"); setSubgameName(body.game.name); setGameUrl(body.game.gameUrl); setGameExternalId(body.game.placeId); setGameUniverseId(body.game.universeId ?? ""); setGameThumbnailUrl(body.game.thumbnailUrl ?? ""); setRequiredConnectionType((current) => current || "Roblox");
       setMessage("Roblox game details and thumbnail refreshed.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Roblox game could not be imported."); }
@@ -99,7 +118,7 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
       const response = await fetch(`/api/events/${eventId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, description: description || null, platformName: platformName || null, subgameName: subgameName || null,
+          name, description: description || null, platformName: platformName || null, subgameName: subgameName || null, gameFieldsTouched,
           gameUrl: gameUrl || null, gameExternalId: gameExternalId || null, gameUniverseId: gameUniverseId || null, gameThumbnailUrl: gameThumbnailUrl || null,
           requiredConnectionType: requiredConnectionType || null,
           startsAt: toIso(dates.startsAt), signupDeadline: toIso(dates.signupDeadline), checkInOpensAt: toIso(dates.checkInOpensAt), checkInDeadline: toIso(dates.checkInDeadline),
@@ -119,18 +138,39 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
 
   const isRoblox = platformName.trim().toLowerCase() === "roblox";
   const usesStandings = bracketFormat === "ROUND_ROBIN" || bracketFormat === "GROUPS_PLAYOFFS";
+  const maxPreview = Number(maxParticipants || 0);
+  const descriptionContext = {
+    eventName: name,
+    eventStart: localIso(dates.startsAt),
+    signupDeadline: localIso(dates.signupDeadline),
+    checkInOpensAt: localIso(dates.checkInOpensAt),
+    checkInDeadline: localIso(dates.checkInDeadline),
+    timezone,
+    game: subgameName || platformName || (!gameFieldsTouched ? initial.legacyGameName : ""),
+    platform: platformName,
+    format: bracketEnabled ? bracketFormat : null,
+    entrantMode: bracketEntryMode,
+    seedingMode: bracketEnabled ? bracketSeedingMode : null,
+    status: preview.status,
+    visibility,
+    host: preview.host,
+    cohosts: preview.cohosts,
+    participants: bracketEntryMode === "TEAM" ? preview.teamParticipants : preview.playerParticipants,
+    maxParticipants: Number.isFinite(maxPreview) ? maxPreview : 0,
+    workspace: preview.workspace,
+  };
 
   return (
     <div className="form-stack">
       <label htmlFor="edit-event-name">Event name</label><input id="edit-event-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={160} required />
       <div className="two-column">
-        <div className="form-stack compact"><label htmlFor="edit-platform">Main category / platform</label><input id="edit-platform" list="edit-platform-options" value={platformName} onChange={(event) => setPlatformName(event.target.value)} /><datalist id="edit-platform-options"><option value="Roblox" /><option value="Minecraft" /><option value="Fortnite" /><option value="Steam" /><option value="Other" /></datalist></div>
-        <div className="form-stack compact"><label htmlFor="edit-subgame">Game inside the platform</label><input id="edit-subgame" value={subgameName} onChange={(event) => setSubgameName(event.target.value)} /></div>
+        <div className="form-stack compact"><label htmlFor="edit-platform">Main category / platform</label><input id="edit-platform" list="edit-platform-options" value={platformName} onChange={(event) => { setGameFieldsTouched(true); setPlatformName(event.target.value); }} /><datalist id="edit-platform-options"><option value="Roblox" /><option value="Minecraft" /><option value="Fortnite" /><option value="Steam" /><option value="Other" /></datalist></div>
+        <div className="form-stack compact"><label htmlFor="edit-subgame">Game inside the platform</label><input id="edit-subgame" value={subgameName} onChange={(event) => { setGameFieldsTouched(true); setSubgameName(event.target.value); }} /></div>
       </div>
       <label htmlFor="edit-game-url">{isRoblox ? "Roblox game link or Place ID" : "Game link"}</label>
       <div className="inline-form"><input id="edit-game-url" value={gameUrl} onChange={(event) => setGameUrl(event.target.value)} />{isRoblox ? <button className="button button-secondary" type="button" disabled={importing || !gameUrl.trim()} onClick={importRobloxGame}>{importing ? "Importing…" : "Refresh from Roblox"}</button> : null}</div>
       {gameThumbnailUrl ? <div className="game-preview"><img src={gameThumbnailUrl} alt="" /><div><span className="card-kicker">{platformName}</span><strong>{subgameName}</strong><span className="muted">Current event artwork</span></div></div> : null}
-      <label htmlFor="edit-description">Description</label><textarea id="edit-description" rows={5} maxLength={5000} value={description} onChange={(event) => setDescription(event.target.value)} />
+      <label htmlFor="edit-description">Description</label><EventDescriptionEditor id="edit-description" rows={8} value={description} onChange={setDescription} context={descriptionContext} />
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-start">Event start</label><input id="edit-start" type="datetime-local" value={dates.startsAt} onChange={(event) => setDate("startsAt", event.target.value)} /></div><div className="form-stack compact"><label htmlFor="edit-signup-deadline">Signup deadline</label><input id="edit-signup-deadline" type="datetime-local" value={dates.signupDeadline} onChange={(event) => setDate("signupDeadline", event.target.value)} /></div></div>
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-checkin-open">Check-in opens</label><input id="edit-checkin-open" type="datetime-local" value={dates.checkInOpensAt} onChange={(event) => setDate("checkInOpensAt", event.target.value)} /></div><div className="form-stack compact"><label htmlFor="edit-checkin-deadline">Check-in deadline</label><input id="edit-checkin-deadline" type="datetime-local" value={dates.checkInDeadline} onChange={(event) => setDate("checkInDeadline", event.target.value)} /></div></div>
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-limit">Maximum {bracketEnabled && bracketEntryMode === "TEAM" ? "teams" : "participants"}</label><input id="edit-limit" type="number" min={0} max={10000} value={maxParticipants} onChange={(event) => setMaxParticipants(event.target.value)} /><span className="field-help">0 or blank means unlimited.</span></div><div className="form-stack compact"><label htmlFor="edit-timezone">Host timezone</label><input id="edit-timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} /></div></div>

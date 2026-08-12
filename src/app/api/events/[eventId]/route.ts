@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
+import { resolveUpdatedGameName } from "@/lib/event-game";
 import { hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -12,6 +13,7 @@ const bracketFormatSchema = z.enum(["SINGLE_ELIMINATION", "THREE_PLAYER", "DOUBL
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(160), description: z.string().trim().max(5000).nullable().optional(),
   platformName: z.string().trim().max(80).nullable().optional(), subgameName: z.string().trim().max(191).nullable().optional(),
+  gameFieldsTouched: z.boolean().default(false),
   gameUrl: optionalUrl, gameExternalId: z.string().trim().max(80).nullable().optional(), gameUniverseId: z.string().trim().max(80).nullable().optional(),
   gameThumbnailUrl: optionalUrl, requiredConnectionType: z.string().trim().max(50).nullable().optional(),
   startsAt: z.string().datetime().nullable().optional(), signupDeadline: z.string().datetime().nullable().optional(),
@@ -29,6 +31,9 @@ type EventAccessRow = RowDataPacket & {
   workspace_id: string;
   primary_host_id: string;
   status: string;
+  game_name: string | null;
+  platform_name: string | null;
+  subgame_name: string | null;
   bracket_enabled: number;
   bracket_format: string | null;
   bracket_entry_mode: string;
@@ -48,7 +53,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   if (!parsed.success) return NextResponse.json({ error: "Invalid event information.", details: parsed.error.flatten() }, { status: 400 });
 
   const rows = await query<EventAccessRow[]>(
-    `SELECT workspace_id, primary_host_id, status, bracket_enabled, bracket_format, bracket_entry_mode,
+    `SELECT workspace_id, primary_host_id, status, game_name, platform_name, subgame_name, bracket_enabled, bracket_format, bracket_entry_mode,
             bracket_seeding_mode, bracket_group_count, bracket_advancers_per_group, bracket_tiebreak_mode
      FROM events WHERE id = ? LIMIT 1`,
     [eventId],
@@ -67,7 +72,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   const maximum = parsed.data.maxParticipants && parsed.data.maxParticipants > 0 ? parsed.data.maxParticipants : null;
   const bracketFormat = parsed.data.bracketEnabled ? parsed.data.bracketFormat ?? "SINGLE_ELIMINATION" : null;
   const seedingMode = parsed.data.bracketEnabled ? parsed.data.bracketSeedingMode ?? "RANDOM" : null;
-  const gameName = parsed.data.subgameName || parsed.data.platformName || null;
+  const gameName = resolveUpdatedGameName({
+    submittedSubgameName: parsed.data.subgameName,
+    submittedPlatformName: parsed.data.platformName,
+    gameFieldsTouched: parsed.data.gameFieldsTouched,
+    existingGameName: event.game_name,
+    existingPlatformName: event.platform_name,
+    existingSubgameName: event.subgame_name,
+  });
   const requireCheckIn = parsed.data.bracketEntryMode === "PLAYER" && parsed.data.bracketRequireCheckIn;
   const competitionChanged = Boolean(parsed.data.bracketEnabled) !== Boolean(event.bracket_enabled)
     || bracketFormat !== event.bracket_format
