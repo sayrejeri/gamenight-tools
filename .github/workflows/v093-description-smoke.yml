@@ -35,6 +35,7 @@ permissions:
 
 jobs:
   description-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 45
     steps:

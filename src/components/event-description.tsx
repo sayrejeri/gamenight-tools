@@ -17,24 +17,40 @@ type InlineParseResult = {
 type InlineParseState = {
   remainingOperations: number;
   failedRanges: Set<string>;
+  delimiterRunLengths: {
+    "*": Map<number, number>;
+    "_": Map<number, number>;
+  };
 };
 
-function delimiterRunLength(text: string, index: number, delimiter: "*" | "_"): number {
-  let length = 0;
-  while (text[index + length] === delimiter) length += 1;
-  return length;
+function delimiterRunLength(
+  text: string,
+  index: number,
+  delimiter: "*" | "_",
+  state: InlineParseState,
+): number {
+  const cache = state.delimiterRunLengths[delimiter];
+  const cached = cache.get(index);
+  if (cached != null) return cached;
+
+  let end = index;
+  while (text[end] === delimiter) end += 1;
+  for (let cursor = index; cursor < end; cursor += 1) {
+    cache.set(cursor, end - cursor);
+  }
+  return end - index;
 }
 
-function closesAt(text: string, index: number, marker: string): boolean {
+function closesAt(text: string, index: number, marker: string, state: InlineParseState): boolean {
   if (marker === "*") {
-    const run = delimiterRunLength(text, index, marker);
+    const run = delimiterRunLength(text, index, marker, state);
     // A two-character run opens/closes bold rather than closing single-character
     // emphasis. Odd/longer runs can close the inner single marker first and leave
     // the remaining pair for its outer formatter.
     return run === 1 || run >= 3;
   }
   if (marker === "_") {
-    const run = delimiterRunLength(text, index, marker);
+    const run = delimiterRunLength(text, index, marker, state);
     return (run === 1 || run >= 3) && canCloseUnderscoreEmphasis(text, index);
   }
   if (marker === "__") return text.startsWith(marker, index) && canCloseUnderscoreEmphasis(text, index);
@@ -102,7 +118,7 @@ function parseInlineRange(
     }
     state.remainingOperations -= 1;
 
-    if (closeMarker && closesAt(text, index, closeMarker)) {
+    if (closeMarker && closesAt(text, index, closeMarker, state)) {
       flushPlain(index);
       return { nodes, index: index + closeMarker.length, closed: true };
     }
@@ -233,6 +249,10 @@ function parseInline(text: string, context: EventDescriptionContext, prefix: str
   const state: InlineParseState = {
     remainingOperations: Math.max(1024, text.length * 24),
     failedRanges: new Set<string>(),
+    delimiterRunLengths: {
+      "*": new Map<number, number>(),
+      "_": new Map<number, number>(),
+    },
   };
   return parseInlineRange(text, context, prefix, state).nodes;
 }
