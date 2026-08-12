@@ -1,0 +1,76 @@
+name: v0.9.3 description smoke
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/event-description.ts"
+      - "src/components/event-description.tsx"
+      - "src/components/event-description-editor.tsx"
+      - "src/components/create-event-form.tsx"
+      - "src/components/edit-event-form.tsx"
+      - "src/app/dashboard/events/[eventId]/page.tsx"
+      - "src/app/dashboard/events/[eventId]/edit/page.tsx"
+      - "src/app/dashboard/workspaces/[workspaceId]/page.tsx"
+      - "src/app/spectate/[token]/page.tsx"
+      - "src/app/api/events/[eventId]/calendar/route.ts"
+      - "tests/v093-description-smoke.cjs"
+      - ".github/workflows/v093-description-smoke.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to test
+        required: true
+        default: feature/v0.9.3-rich-event-descriptions
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  description-smoke:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Clone requested ref and run description smoke tests
+        shell: powershell
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $targetRef = if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_REF)) { $env:REQUESTED_REF } else { $env:PR_HEAD_REF }
+          if ([string]::IsNullOrWhiteSpace($targetRef)) { throw "Could not determine the branch to test." }
+          if ($targetRef -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+
+          $safeRef = $targetRef.Replace("/", "-")
+          $work = Join-Path $env:RUNNER_TEMP "gamenight-v093-description-$safeRef"
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-v093-description"
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $work, $nodeRoot | Out-Null
+
+          git clone --depth 1 --branch "$targetRef" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+          Set-Location $work
+
+          $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
+          $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
+          if (-not $nodeVersion) { throw "Could not determine the latest Node.js 22 version." }
+          $nodeZip = Join-Path $env:RUNNER_TEMP "node22-v093-description.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip" -OutFile $nodeZip
+          Expand-Archive $nodeZip -DestinationPath $nodeRoot -Force
+          $nodeDir = Join-Path $nodeRoot "node-$nodeVersion-win-x64"
+          $env:Path = "$nodeDir;$env:Path"
+
+          npm install
+
+          $out = Join-Path $work ".v093-description-test"
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          npx tsc "src/lib/event-description.ts" --target ES2022 --module commonjs --lib ES2022,DOM --outDir "$out" --skipLibCheck --esModuleInterop
+          if ($LASTEXITCODE -ne 0) { throw "Could not compile event-description.ts for smoke tests." }
+
+          $compiled = Get-ChildItem -Path $out -Filter "event-description.js" -Recurse | Select-Object -First 1
+          if (-not $compiled) { throw "Compiled event-description.js was not found." }
+          node "tests/v093-description-smoke.cjs" "$($compiled.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "v0.9.3 description smoke tests failed." }
