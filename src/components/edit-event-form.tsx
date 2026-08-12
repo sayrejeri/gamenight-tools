@@ -148,7 +148,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
     platform: platformName,
     format: bracketEnabled ? bracketFormat : null,
     entrantMode: bracketEntryMode,
-    seedingMode: bracketSeedingMode,
+    seedingMode: bracketEnabled ? bracketSeedingMode : null,
     status: preview.status,
     visibility,
     host: preview.host,
