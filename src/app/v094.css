@@ -1,0 +1,43 @@
+/* v0.9.4 — Bracket & Event Polish */
+
+/* Once a real two-sided match is decided, make the opposite entrant's result explicit.
+   BYE/TBD slots are intentionally excluded so automatic advancement is never presented as a loss. */
+.match-card:has(.match-participant.winner) .match-participant:not(.winner):not(.bye)::after {
+  content: "Loser";
+  font-weight: 700;
+  opacity: 0.62;
+}
+
+/* Single-elimination keeps BYEs internally for correct advancement, but automatic
+   one-sided match cards no longer clutter the visual bracket. Future TBD matches
+   have no winner and therefore remain visible. */
+.bracket-round .match-card:has(.match-participant.winner):has(.match-participant.bye) {
+  display: none;
+}
+
+.events-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.events-view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.events-archive-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.events-archive-form label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 165px;
+}
