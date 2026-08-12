@@ -6,40 +6,27 @@ import {
   type EventDescriptionContext,
 } from "@/lib/event-description";
 
-type InlineMatch = {
+type InlineParseResult = {
+  nodes: ReactNode[];
   index: number;
-  full: string;
-  inner: string;
-  kind: "variable" | "code" | "boldItalic" | "bold" | "underline" | "strike" | "italic";
+  closed: boolean;
 };
 
-function earliestInlineMatch(text: string): InlineMatch | null {
-  const patterns: Array<{ kind: InlineMatch["kind"]; regex: RegExp; innerGroup: number }> = [
-    { kind: "variable", regex: /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/, innerGroup: 1 },
-    { kind: "code", regex: /`([^`]+)`/, innerGroup: 1 },
-    // Toolbar actions can naturally produce ***text*** when bold and italic are
-    // applied to the same selection. Match that form before the individual rules.
-    { kind: "boldItalic", regex: /\*\*\*([^*\n]+)\*\*\*/, innerGroup: 1 },
-    { kind: "bold", regex: /\*\*([^*]+)\*\*/, innerGroup: 1 },
-    { kind: "underline", regex: /__([^_]+)__/, innerGroup: 1 },
-    { kind: "strike", regex: /~~([^~]+)~~/, innerGroup: 1 },
-    { kind: "italic", regex: /\*([^*\n]+)\*/, innerGroup: 1 },
-    { kind: "italic", regex: /_([^_\n]+)_/, innerGroup: 1 },
-  ];
+function delimiterRunLength(text: string, index: number, delimiter: "*" | "_"): number {
+  let length = 0;
+  while (text[index + length] === delimiter) length += 1;
+  return length;
+}
 
-  let winner: InlineMatch | null = null;
-  for (const pattern of patterns) {
-    const match = pattern.regex.exec(text);
-    if (!match || match.index == null) continue;
-    const candidate: InlineMatch = {
-      index: match.index,
-      full: match[0],
-      inner: match[pattern.innerGroup] ?? "",
-      kind: pattern.kind,
-    };
-    if (!winner || candidate.index < winner.index) winner = candidate;
+function closesAt(text: string, index: number, marker: string): boolean {
+  if (marker === "*" || marker === "_") {
+    const run = delimiterRunLength(text, index, marker);
+    // A two-character run opens/closes bold or underline rather than closing
+    // single-character emphasis. Odd/longer runs can close the inner single
+    // marker first and leave the remaining pair for its outer formatter.
+    return run === 1 || run >= 3;
   }
-  return winner;
+  return text.startsWith(marker, index);
 }
 
 function variableNode(key: string, context: EventDescriptionContext, nodeKey: string): ReactNode {
@@ -62,33 +49,156 @@ function variableNode(key: string, context: EventDescriptionContext, nodeKey: st
   return <Fragment key={nodeKey}>{resolved}</Fragment>;
 }
 
-function parseInline(text: string, context: EventDescriptionContext, prefix: string): ReactNode[] {
+function parseInlineRange(
+  text: string,
+  context: EventDescriptionContext,
+  prefix: string,
+  start = 0,
+  closeMarker?: string,
+): InlineParseResult {
   const nodes: ReactNode[] = [];
-  let remaining = text;
-  let index = 0;
+  let index = start;
+  let plainStart = start;
+  let part = 0;
 
-  while (remaining) {
-    const match = earliestInlineMatch(remaining);
-    if (!match) {
-      nodes.push(<Fragment key={`${prefix}-text-${index}`}>{remaining}</Fragment>);
-      break;
+  const flushPlain = (end: number) => {
+    if (end <= plainStart) return;
+    nodes.push(<Fragment key={`${prefix}-text-${part}`}>{text.slice(plainStart, end)}</Fragment>);
+    part += 1;
+  };
+
+  const pushRawMarker = (marker: string) => {
+    nodes.push(<Fragment key={`${prefix}-raw-${part}`}>{marker}</Fragment>);
+    part += 1;
+  };
+
+  while (index < text.length) {
+    if (closeMarker && closesAt(text, index, closeMarker)) {
+      flushPlain(index);
+      return { nodes, index: index + closeMarker.length, closed: true };
     }
-    if (match.index > 0) nodes.push(<Fragment key={`${prefix}-lead-${index}`}>{remaining.slice(0, match.index)}</Fragment>);
 
-    const key = `${prefix}-${match.kind}-${index}`;
-    if (match.kind === "variable") nodes.push(variableNode(match.inner, context, key));
-    else if (match.kind === "code") nodes.push(<code key={key}>{match.inner}</code>);
-    else if (match.kind === "boldItalic") nodes.push(<strong key={key}><em>{parseInline(match.inner, context, `${key}-inner`)}</em></strong>);
-    else if (match.kind === "bold") nodes.push(<strong key={key}>{parseInline(match.inner, context, `${key}-inner`)}</strong>);
-    else if (match.kind === "underline") nodes.push(<u key={key}>{parseInline(match.inner, context, `${key}-inner`)}</u>);
-    else if (match.kind === "strike") nodes.push(<s key={key}>{parseInline(match.inner, context, `${key}-inner`)}</s>);
-    else nodes.push(<em key={key}>{parseInline(match.inner, context, `${key}-inner`)}</em>);
+    const variable = /^\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/.exec(text.slice(index));
+    if (variable) {
+      flushPlain(index);
+      nodes.push(variableNode(variable[1], context, `${prefix}-variable-${part}`));
+      part += 1;
+      index += variable[0].length;
+      plainStart = index;
+      continue;
+    }
 
-    remaining = remaining.slice(match.index + match.full.length);
+    if (text[index] === "`") {
+      const end = text.indexOf("`", index + 1);
+      if (end > index + 1) {
+        flushPlain(index);
+        nodes.push(<code key={`${prefix}-code-${part}`}>{text.slice(index + 1, end)}</code>);
+        part += 1;
+        index = end + 1;
+        plainStart = index;
+        continue;
+      }
+    }
+
+    if (text.startsWith("***", index)) {
+      flushPlain(index);
+      const innerItalic = parseInlineRange(text, context, `${prefix}-bold-italic-${part}`, index + 3, "*");
+      if (innerItalic.closed && text.startsWith("**", innerItalic.index)) {
+        nodes.push(<strong key={`${prefix}-bold-italic-${part}`}><em>{innerItalic.nodes}</em></strong>);
+        part += 1;
+        index = innerItalic.index + 2;
+      } else {
+        pushRawMarker("***");
+        index += 3;
+      }
+      plainStart = index;
+      continue;
+    }
+
+    if (text.startsWith("**", index)) {
+      flushPlain(index);
+      const inner = parseInlineRange(text, context, `${prefix}-bold-${part}`, index + 2, "**");
+      if (inner.closed) {
+        nodes.push(<strong key={`${prefix}-bold-${part}`}>{inner.nodes}</strong>);
+        part += 1;
+        index = inner.index;
+      } else {
+        pushRawMarker("**");
+        index += 2;
+      }
+      plainStart = index;
+      continue;
+    }
+
+    if (text[index] === "*") {
+      flushPlain(index);
+      const inner = parseInlineRange(text, context, `${prefix}-italic-${part}`, index + 1, "*");
+      if (inner.closed) {
+        nodes.push(<em key={`${prefix}-italic-${part}`}>{inner.nodes}</em>);
+        part += 1;
+        index = inner.index;
+      } else {
+        pushRawMarker("*");
+        index += 1;
+      }
+      plainStart = index;
+      continue;
+    }
+
+    if (text.startsWith("__", index)) {
+      flushPlain(index);
+      const inner = parseInlineRange(text, context, `${prefix}-underline-${part}`, index + 2, "__");
+      if (inner.closed) {
+        nodes.push(<u key={`${prefix}-underline-${part}`}>{inner.nodes}</u>);
+        part += 1;
+        index = inner.index;
+      } else {
+        pushRawMarker("__");
+        index += 2;
+      }
+      plainStart = index;
+      continue;
+    }
+
+    if (text[index] === "_") {
+      flushPlain(index);
+      const inner = parseInlineRange(text, context, `${prefix}-italic-underscore-${part}`, index + 1, "_");
+      if (inner.closed) {
+        nodes.push(<em key={`${prefix}-italic-underscore-${part}`}>{inner.nodes}</em>);
+        part += 1;
+        index = inner.index;
+      } else {
+        pushRawMarker("_");
+        index += 1;
+      }
+      plainStart = index;
+      continue;
+    }
+
+    if (text.startsWith("~~", index)) {
+      flushPlain(index);
+      const inner = parseInlineRange(text, context, `${prefix}-strike-${part}`, index + 2, "~~");
+      if (inner.closed) {
+        nodes.push(<s key={`${prefix}-strike-${part}`}>{inner.nodes}</s>);
+        part += 1;
+        index = inner.index;
+      } else {
+        pushRawMarker("~~");
+        index += 2;
+      }
+      plainStart = index;
+      continue;
+    }
+
     index += 1;
   }
 
-  return nodes;
+  flushPlain(text.length);
+  return { nodes, index: text.length, closed: false };
+}
+
+function parseInline(text: string, context: EventDescriptionContext, prefix: string): ReactNode[] {
+  return parseInlineRange(text, context, prefix).nodes;
 }
 
 function inlineWithBreaks(text: string, context: EventDescriptionContext, prefix: string): ReactNode[] {
