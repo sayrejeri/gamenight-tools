@@ -128,28 +128,33 @@ export function interpolateEventDescription(source: string, context: EventDescri
 }
 
 export function renderEventDescriptionPlainText(source: string, context: EventDescriptionContext): string {
-  const protectedValues: string[] = [];
-  const protectedSource = source.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => {
-    const resolved = resolveEventDescriptionValue(key, context);
-    if (resolved == null) return full;
-    const marker = `\uE000${protectedValues.length}\uE001`;
-    protectedValues.push(resolved);
+  const protectedLiterals: string[] = [];
+  const protectLiteral = (value: string): string => {
+    const marker = `\uE000${protectedLiterals.length}\uE001`;
+    protectedLiterals.push(value);
     return marker;
+  };
+
+  // Match the web renderer: inline-code contents are literal. Protect them before
+  // resolving variables or stripping any other supported Markdown delimiters.
+  const codeProtected = source.replace(/`([^`\n]+)`/g, (_full, inner: string) => protectLiteral(inner));
+  const valueProtected = codeProtected.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (full, key: string) => {
+    const resolved = resolveEventDescriptionValue(key, context);
+    return resolved == null ? full : protectLiteral(resolved);
   });
 
-  const stripped = protectedSource
+  const stripped = valueProtected
     .split(/\r?\n/)
     .map((line) => line
       .replace(/^\s{0,3}#{1,3}\s+/, "")
       .replace(/^\s*>\s?/, "")
       .replace(/^\s*[-*•]\s+/, "• "))
     .join("\n")
-    .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
     .replace(/~~([^~]+)~~/g, "$1")
     .replace(/\*([^*\n]+)\*/g, "$1")
     .replace(/_([^_\n]+)_/g, "$1");
 
-  return stripped.replace(/\uE000(\d+)\uE001/g, (full, index: string) => protectedValues[Number(index)] ?? full);
+  return stripped.replace(/\uE000(\d+)\uE001/g, (full, index: string) => protectedLiterals[Number(index)] ?? full);
 }
