@@ -67,23 +67,34 @@ function underscoreRunBounds(text: string, index: number): { start: number; end:
   return { start, end };
 }
 
+function codePointBefore(text: string, index: number): string | undefined {
+  if (index <= 0) return undefined;
+  const codePoints = Array.from(text.slice(0, index));
+  return codePoints[codePoints.length - 1];
+}
+
+function codePointAt(text: string, index: number): string | undefined {
+  if (index >= text.length) return undefined;
+  return Array.from(text.slice(index))[0];
+}
+
 function isWordLike(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_]/.test(value));
+  return Boolean(value && /[\p{L}\p{N}_]/u.test(value));
 }
 
 export function canOpenUnderscoreEmphasis(text: string, index: number): boolean {
   const { start, end } = underscoreRunBounds(text, index);
-  const before = start > 0 ? text[start - 1] : undefined;
-  const after = text[end];
-  if (!after || /\s/.test(after)) return false;
+  const before = codePointBefore(text, start);
+  const after = codePointAt(text, end);
+  if (!after || /\s/u.test(after)) return false;
   return !isWordLike(before);
 }
 
 export function canCloseUnderscoreEmphasis(text: string, index: number): boolean {
   const { start, end } = underscoreRunBounds(text, index);
-  const before = start > 0 ? text[start - 1] : undefined;
-  const after = text[end];
-  if (!before || /\s/.test(before)) return false;
+  const before = codePointBefore(text, start);
+  const after = codePointAt(text, end);
+  if (!before || /\s/u.test(before)) return false;
   return !isWordLike(after);
 }
 
