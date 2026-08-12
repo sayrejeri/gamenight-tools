@@ -39,7 +39,8 @@ type EditPreviewContext = {
   status: string;
   host: string;
   cohosts: string[];
-  participants: number;
+  playerParticipants: number;
+  teamParticipants: number;
   workspace: string;
 };
 
@@ -151,7 +152,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
     visibility,
     host: preview.host,
     cohosts: preview.cohosts,
-    participants: preview.participants,
+    participants: bracketEntryMode === "TEAM" ? preview.teamParticipants : preview.playerParticipants,
     maxParticipants: Number.isFinite(maxPreview) ? maxPreview : 0,
     workspace: preview.workspace,
   };
