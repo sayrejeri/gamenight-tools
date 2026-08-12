@@ -1,0 +1,103 @@
+name: v0.9.4 bracket event polish
+
+on:
+  pull_request:
+    paths:
+      - "src/app/dashboard/events/page.tsx"
+      - "src/app/dashboard/events/[eventId]/bracket/page.tsx"
+      - "src/app/layout.tsx"
+      - "src/app/v094.css"
+      - "src/components/bracket/**"
+      - "src/components/bracket-viewer.tsx"
+      - "VERSION"
+      - "package.json"
+      - "tests/v070-competition-smoke.cjs"
+      - ".github/workflows/v094-polish-smoke.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to test
+        required: true
+        default: feature/v0.9.4-bracket-event-polish
+        type: string
+
+concurrency:
+  group: v094-polish-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  polish-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    steps:
+      - name: Run v0.9.4 release checks
+        shell: powershell
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $targetRef = if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_REF)) { $env:REQUESTED_REF } else { $env:PR_HEAD_REF }
+          if ([string]::IsNullOrWhiteSpace($targetRef)) { throw "Could not determine the ref to test." }
+          if ($targetRef -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+
+          $safeRef = $targetRef.Replace("/", "-")
+          $work = Join-Path $env:RUNNER_TEMP "gamenight-v094-$safeRef"
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-v094"
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $work, $nodeRoot | Out-Null
+
+          git clone --depth 1 --branch "$targetRef" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+          Set-Location $work
+          if (-not [string]::IsNullOrWhiteSpace($env:EXPECTED_SHA)) {
+            $checkedOutSha = (git rev-parse HEAD).Trim()
+            if ($checkedOutSha -ne $env:EXPECTED_SHA) { throw "Checked out $checkedOutSha but expected $env:EXPECTED_SHA." }
+          }
+
+          $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
+          $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
+          if (-not $nodeVersion) { throw "Could not determine the latest Node.js 22 version." }
+          $nodeZip = Join-Path $env:RUNNER_TEMP "node22-v094.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip" -OutFile $nodeZip
+          Expand-Archive $nodeZip -DestinationPath $nodeRoot -Force
+          $nodeDir = Join-Path $nodeRoot "node-$nodeVersion-win-x64"
+          $env:Path = "$nodeDir;$env:Path"
+
+          npm install
+
+          $modelOut = Join-Path $work ".v094-model-test"
+          if (Test-Path $modelOut) { Remove-Item $modelOut -Recurse -Force }
+          $smokeConfigPath = Join-Path $work ".v094-smoke-tsconfig.json"
+          $smokeConfig = @{
+            compilerOptions = @{
+              target = "ES2022"
+              module = "commonjs"
+              lib = @("ES2022", "DOM")
+              outDir = ".v094-model-test"
+              skipLibCheck = $true
+              esModuleInterop = $true
+            }
+            files = @("src/components/bracket/bracket-model.ts")
+          } | ConvertTo-Json -Depth 4
+          $smokeConfig | Set-Content -Path $smokeConfigPath -Encoding UTF8
+          npx tsc -p "$smokeConfigPath"
+          if ($LASTEXITCODE -ne 0) { throw "Could not compile bracket-model.ts for competition smoke tests." }
+
+          $compiled = Get-ChildItem -Path $modelOut -Filter "bracket-model.js" -Recurse | Select-Object -First 1
+          if (-not $compiled) { throw "Compiled bracket-model.js was not found." }
+          node "tests/v070-competition-smoke.cjs" "$($compiled.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Competition regression smoke tests failed." }
+
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript typecheck failed." }
+
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Production build failed." }
