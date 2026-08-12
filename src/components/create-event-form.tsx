@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { EventDescriptionEditor } from "@/components/event-description-editor";
 
 export type EventTemplateOption = {
   id: string;
@@ -81,13 +82,21 @@ function blankFields(timezone: string): EventFormFields {
   };
 }
 
+function localIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 export function CreateEventForm({
   workspaceId,
+  workspaceName,
   defaultTimezone,
   templates,
   workspaceGames,
 }: {
   workspaceId: string;
+  workspaceName: string;
   defaultTimezone: string;
   templates: EventTemplateOption[];
   workspaceGames: WorkspaceGameOption[];
@@ -200,6 +209,28 @@ export function CreateEventForm({
     }
   }
 
+  const maxPreview = Number(fields.maxParticipants || 0);
+  const descriptionContext = {
+    eventName: fields.name,
+    eventStart: localIso(fields.startsAt),
+    signupDeadline: localIso(fields.signupDeadline),
+    checkInOpensAt: localIso(fields.checkInOpensAt),
+    checkInDeadline: localIso(fields.checkInDeadline),
+    timezone: fields.timezone,
+    game: fields.subgameName || fields.platformName,
+    platform: fields.platformName,
+    format: fields.bracketEnabled ? fields.bracketFormat : null,
+    entrantMode: fields.bracketEnabled ? fields.bracketEntryMode : null,
+    seedingMode: fields.bracketEnabled ? fields.bracketSeedingMode : null,
+    status: "DRAFT",
+    visibility: fields.visibility,
+    host: "You",
+    cohosts: [],
+    participants: 0,
+    maxParticipants: Number.isFinite(maxPreview) ? maxPreview : 0,
+    workspace: workspaceName,
+  };
+
   return (
     <div className="form-stack">
       {templates.length ? (
@@ -243,7 +274,7 @@ export function CreateEventForm({
       {fields.gameThumbnailUrl ? <div className="game-preview"><img src={fields.gameThumbnailUrl} alt="" /><div><span className="card-kicker">{fields.platformName || "Game"}</span><strong>{fields.subgameName || "Imported game"}</strong><span className="muted">This artwork will appear on the event page.</span></div></div> : null}
 
       <label htmlFor="event-description">Description</label>
-      <textarea id="event-description" value={fields.description} onChange={(event) => setField("description", event.target.value)} rows={4} maxLength={5000} />
+      <EventDescriptionEditor id="event-description" value={fields.description} onChange={(value) => setField("description", value)} context={descriptionContext} rows={8} />
 
       <div className="two-column">
         <div className="form-stack compact"><label htmlFor="starts-at">Event start</label><input id="starts-at" type="datetime-local" value={fields.startsAt} onChange={(event) => setField("startsAt", event.target.value)} /></div>
