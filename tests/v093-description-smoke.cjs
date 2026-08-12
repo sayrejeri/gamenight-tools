@@ -51,7 +51,7 @@ const plain = description.renderEventDescriptionPlainText(
 );
 assert.equal(
   plain,
-  "Tournament\n\n• One loss\n• Random seeding\n\nHosted by Jeremiah\nUse Single Elimination and fight compete.",
+  "Tournament\n\n• One loss\n• Random seeding\n\nHosted by Jeremiah\nUse {{event.format}} and fight compete.",
 );
 
 const literalValueContext = { ...context, host: "a_b_c", cohosts: ["*Ace*", "Tick`Tock", "~~Ref~~"] };
@@ -60,6 +60,12 @@ const literalValuePlain = description.renderEventDescriptionPlainText(
   literalValueContext,
 );
 assert.equal(literalValuePlain, "Host: a_b_c\nCo-hosts: *Ace*, Tick`Tock, ~~Ref~~");
+
+const inlineCodePlain = description.renderEventDescriptionPlainText(
+  "Inline `a_b_c`, `**not bold**`, and `{{host}}`; outside code: {{host}}.",
+  literalValueContext,
+);
+assert.equal(inlineCodePlain, "Inline a_b_c, **not bold**, and {{host}}; outside code: a_b_c.");
 
 const capped = { ...context, maxParticipants: 32, cohosts: [] };
 assert.equal(description.resolveEventDescriptionValue("max_participants", capped), "32");
