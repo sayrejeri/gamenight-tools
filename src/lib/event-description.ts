@@ -69,17 +69,26 @@ function underscoreRunBounds(text: string, index: number): { start: number; end:
 
 function codePointBefore(text: string, index: number): string | undefined {
   if (index <= 0) return undefined;
-  const codePoints = Array.from(text.slice(0, index));
-  return codePoints[codePoints.length - 1];
+  const last = text.charCodeAt(index - 1);
+  if (last >= 0xdc00 && last <= 0xdfff && index >= 2) {
+    const first = text.charCodeAt(index - 2);
+    if (first >= 0xd800 && first <= 0xdbff) return text.slice(index - 2, index);
+  }
+  return text[index - 1];
 }
 
 function codePointAt(text: string, index: number): string | undefined {
   if (index >= text.length) return undefined;
-  return Array.from(text.slice(index))[0];
+  const first = text.charCodeAt(index);
+  if (first >= 0xd800 && first <= 0xdbff && index + 1 < text.length) {
+    const last = text.charCodeAt(index + 1);
+    if (last >= 0xdc00 && last <= 0xdfff) return text.slice(index, index + 2);
+  }
+  return text[index];
 }
 
 function isWordLike(value: string | undefined): boolean {
-  return Boolean(value && /[\p{L}\p{N}_]/u.test(value));
+  return Boolean(value && /[\p{L}\p{N}\p{M}_]/u.test(value));
 }
 
 export function canOpenUnderscoreEmphasis(text: string, index: number): boolean {

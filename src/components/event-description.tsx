@@ -14,6 +14,11 @@ type InlineParseResult = {
   closed: boolean;
 };
 
+type InlineParseState = {
+  remainingOperations: number;
+  failedRanges: Set<string>;
+};
+
 function delimiterRunLength(text: string, index: number, delimiter: "*" | "_"): number {
   let length = 0;
   while (text[index + length] === delimiter) length += 1;
@@ -60,9 +65,15 @@ function parseInlineRange(
   text: string,
   context: EventDescriptionContext,
   prefix: string,
+  state: InlineParseState,
   start = 0,
   closeMarker?: string,
 ): InlineParseResult {
+  const failureKey = closeMarker ? `${start}:${closeMarker}` : null;
+  if (failureKey && state.failedRanges.has(failureKey)) {
+    return { nodes: [], index: start, closed: false };
+  }
+
   const nodes: ReactNode[] = [];
   let index = start;
   let plainStart = start;
@@ -80,19 +91,32 @@ function parseInlineRange(
   };
 
   while (index < text.length) {
+    // Malformed nested delimiters previously caused recursive rescans of the same
+    // suffix and exponential work. Every line now shares a strict work budget and
+    // remembers failed ranges, so hostile or accidental input degrades to literal
+    // text instead of blocking the editor or a server render.
+    if (state.remainingOperations <= 0) {
+      if (failureKey) state.failedRanges.add(failureKey);
+      if (!closeMarker) flushPlain(text.length);
+      return { nodes, index: closeMarker ? start : text.length, closed: false };
+    }
+    state.remainingOperations -= 1;
+
     if (closeMarker && closesAt(text, index, closeMarker)) {
       flushPlain(index);
       return { nodes, index: index + closeMarker.length, closed: true };
     }
 
-    const variable = /^\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/.exec(text.slice(index));
-    if (variable) {
-      flushPlain(index);
-      nodes.push(variableNode(variable[1], context, `${prefix}-variable-${part}`));
-      part += 1;
-      index += variable[0].length;
-      plainStart = index;
-      continue;
+    if (text.startsWith("{{", index)) {
+      const variable = /^\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/.exec(text.slice(index));
+      if (variable) {
+        flushPlain(index);
+        nodes.push(variableNode(variable[1], context, `${prefix}-variable-${part}`));
+        part += 1;
+        index += variable[0].length;
+        plainStart = index;
+        continue;
+      }
     }
 
     if (text[index] === "`") {
@@ -109,7 +133,7 @@ function parseInlineRange(
 
     if (text.startsWith("***", index)) {
       flushPlain(index);
-      const innerItalic = parseInlineRange(text, context, `${prefix}-bold-italic-${part}`, index + 3, "*");
+      const innerItalic = parseInlineRange(text, context, `${prefix}-bold-italic-${part}`, state, index + 3, "*");
       if (innerItalic.closed && text.startsWith("**", innerItalic.index)) {
         nodes.push(<strong key={`${prefix}-bold-italic-${part}`}><em>{innerItalic.nodes}</em></strong>);
         part += 1;
@@ -124,7 +148,7 @@ function parseInlineRange(
 
     if (text.startsWith("**", index)) {
       flushPlain(index);
-      const inner = parseInlineRange(text, context, `${prefix}-bold-${part}`, index + 2, "**");
+      const inner = parseInlineRange(text, context, `${prefix}-bold-${part}`, state, index + 2, "**");
       if (inner.closed) {
         nodes.push(<strong key={`${prefix}-bold-${part}`}>{inner.nodes}</strong>);
         part += 1;
@@ -139,7 +163,7 @@ function parseInlineRange(
 
     if (text[index] === "*") {
       flushPlain(index);
-      const inner = parseInlineRange(text, context, `${prefix}-italic-${part}`, index + 1, "*");
+      const inner = parseInlineRange(text, context, `${prefix}-italic-${part}`, state, index + 1, "*");
       if (inner.closed) {
         nodes.push(<em key={`${prefix}-italic-${part}`}>{inner.nodes}</em>);
         part += 1;
@@ -154,7 +178,7 @@ function parseInlineRange(
 
     if (text.startsWith("__", index) && canOpenUnderscoreEmphasis(text, index)) {
       flushPlain(index);
-      const inner = parseInlineRange(text, context, `${prefix}-underline-${part}`, index + 2, "__");
+      const inner = parseInlineRange(text, context, `${prefix}-underline-${part}`, state, index + 2, "__");
       if (inner.closed) {
         nodes.push(<u key={`${prefix}-underline-${part}`}>{inner.nodes}</u>);
         part += 1;
@@ -169,7 +193,7 @@ function parseInlineRange(
 
     if (text[index] === "_" && canOpenUnderscoreEmphasis(text, index)) {
       flushPlain(index);
-      const inner = parseInlineRange(text, context, `${prefix}-italic-underscore-${part}`, index + 1, "_");
+      const inner = parseInlineRange(text, context, `${prefix}-italic-underscore-${part}`, state, index + 1, "_");
       if (inner.closed) {
         nodes.push(<em key={`${prefix}-italic-underscore-${part}`}>{inner.nodes}</em>);
         part += 1;
@@ -184,7 +208,7 @@ function parseInlineRange(
 
     if (text.startsWith("~~", index)) {
       flushPlain(index);
-      const inner = parseInlineRange(text, context, `${prefix}-strike-${part}`, index + 2, "~~");
+      const inner = parseInlineRange(text, context, `${prefix}-strike-${part}`, state, index + 2, "~~");
       if (inner.closed) {
         nodes.push(<s key={`${prefix}-strike-${part}`}>{inner.nodes}</s>);
         part += 1;
@@ -200,12 +224,17 @@ function parseInlineRange(
     index += 1;
   }
 
+  if (failureKey) state.failedRanges.add(failureKey);
   flushPlain(text.length);
   return { nodes, index: text.length, closed: false };
 }
 
 function parseInline(text: string, context: EventDescriptionContext, prefix: string): ReactNode[] {
-  return parseInlineRange(text, context, prefix).nodes;
+  const state: InlineParseState = {
+    remainingOperations: Math.max(1024, text.length * 24),
+    failedRanges: new Set<string>(),
+  };
+  return parseInlineRange(text, context, prefix, state).nodes;
 }
 
 function inlineWithBreaks(text: string, context: EventDescriptionContext, prefix: string): ReactNode[] {

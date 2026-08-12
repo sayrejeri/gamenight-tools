@@ -74,7 +74,7 @@ jobs:
 
           $out = Join-Path $work ".v093-description-test"
           if (Test-Path $out) { Remove-Item $out -Recurse -Force }
-          npx tsc "src/lib/event-description.ts" "src/lib/event-game.ts" --target ES2022 --module commonjs --lib ES2022,DOM --outDir "$out" --skipLibCheck --esModuleInterop
+          npx tsc --ignoreConfig "src/lib/event-description.ts" "src/lib/event-game.ts" --target ES2022 --module commonjs --lib ES2022,DOM --outDir "$out" --skipLibCheck --esModuleInterop
           if ($LASTEXITCODE -ne 0) { throw "Could not compile v0.9.3 pure helpers for smoke tests." }
 
           $compiledDescription = Get-ChildItem -Path $out -Filter "event-description.js" -Recurse | Select-Object -First 1

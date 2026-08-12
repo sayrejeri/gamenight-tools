@@ -58,6 +58,8 @@ assert.equal(description.canOpenUnderscoreEmphasis("玩家_模式_值", 2), fals
 assert.equal(description.canCloseUnderscoreEmphasis("玩家_模式_值", 5), false);
 assert.equal(description.canOpenUnderscoreEmphasis("𐐀_𐐁_𐐂", 2), false);
 assert.equal(description.canCloseUnderscoreEmphasis("𐐀_𐐁_𐐂", 5), false);
+assert.equal(description.canOpenUnderscoreEmphasis("cafe\u0301_mode_value", 5), false);
+assert.equal(description.canCloseUnderscoreEmphasis("_mode_\u0301value", 5), false);
 assert.equal(description.canOpenUnderscoreEmphasis("__underline__", 0), true);
 assert.equal(description.canCloseUnderscoreEmphasis("__underline__", 11), true);
 
