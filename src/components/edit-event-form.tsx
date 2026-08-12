@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { EventDescriptionEditor } from "@/components/event-description-editor";
 
 type BracketFormat = "SINGLE_ELIMINATION" | "THREE_PLAYER" | "DOUBLE_ELIMINATION" | "ROUND_ROBIN" | "GROUPS_PLAYOFFS";
 
@@ -42,6 +43,12 @@ function toLocalInput(value: string | null): string {
   if (Number.isNaN(date.getTime())) return "";
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 16);
+}
+
+function localIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 export function EditEventForm({ eventId, initial }: { eventId: string; initial: InitialEvent }) {
@@ -119,6 +126,27 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
 
   const isRoblox = platformName.trim().toLowerCase() === "roblox";
   const usesStandings = bracketFormat === "ROUND_ROBIN" || bracketFormat === "GROUPS_PLAYOFFS";
+  const maxPreview = Number(maxParticipants || 0);
+  const descriptionContext = {
+    eventName: name,
+    eventStart: localIso(dates.startsAt),
+    signupDeadline: localIso(dates.signupDeadline),
+    checkInOpensAt: localIso(dates.checkInOpensAt),
+    checkInDeadline: localIso(dates.checkInDeadline),
+    timezone,
+    game: subgameName || platformName,
+    platform: platformName,
+    format: bracketEnabled ? bracketFormat : null,
+    entrantMode: bracketEnabled ? bracketEntryMode : null,
+    seedingMode: bracketEnabled ? bracketSeedingMode : null,
+    status: "CURRENT",
+    visibility,
+    host: "Primary host",
+    cohosts: [],
+    participants: 0,
+    maxParticipants: Number.isFinite(maxPreview) ? maxPreview : 0,
+    workspace: "Current server",
+  };
 
   return (
     <div className="form-stack">
@@ -130,7 +158,7 @@ export function EditEventForm({ eventId, initial }: { eventId: string; initial: 
       <label htmlFor="edit-game-url">{isRoblox ? "Roblox game link or Place ID" : "Game link"}</label>
       <div className="inline-form"><input id="edit-game-url" value={gameUrl} onChange={(event) => setGameUrl(event.target.value)} />{isRoblox ? <button className="button button-secondary" type="button" disabled={importing || !gameUrl.trim()} onClick={importRobloxGame}>{importing ? "Importing…" : "Refresh from Roblox"}</button> : null}</div>
       {gameThumbnailUrl ? <div className="game-preview"><img src={gameThumbnailUrl} alt="" /><div><span className="card-kicker">{platformName}</span><strong>{subgameName}</strong><span className="muted">Current event artwork</span></div></div> : null}
-      <label htmlFor="edit-description">Description</label><textarea id="edit-description" rows={5} maxLength={5000} value={description} onChange={(event) => setDescription(event.target.value)} />
+      <label htmlFor="edit-description">Description</label><EventDescriptionEditor id="edit-description" rows={8} value={description} onChange={setDescription} context={descriptionContext} />
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-start">Event start</label><input id="edit-start" type="datetime-local" value={dates.startsAt} onChange={(event) => setDate("startsAt", event.target.value)} /></div><div className="form-stack compact"><label htmlFor="edit-signup-deadline">Signup deadline</label><input id="edit-signup-deadline" type="datetime-local" value={dates.signupDeadline} onChange={(event) => setDate("signupDeadline", event.target.value)} /></div></div>
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-checkin-open">Check-in opens</label><input id="edit-checkin-open" type="datetime-local" value={dates.checkInOpensAt} onChange={(event) => setDate("checkInOpensAt", event.target.value)} /></div><div className="form-stack compact"><label htmlFor="edit-checkin-deadline">Check-in deadline</label><input id="edit-checkin-deadline" type="datetime-local" value={dates.checkInDeadline} onChange={(event) => setDate("checkInDeadline", event.target.value)} /></div></div>
       <div className="two-column"><div className="form-stack compact"><label htmlFor="edit-limit">Maximum {bracketEnabled && bracketEntryMode === "TEAM" ? "teams" : "participants"}</label><input id="edit-limit" type="number" min={0} max={10000} value={maxParticipants} onChange={(event) => setMaxParticipants(event.target.value)} /><span className="field-help">0 or blank means unlimited.</span></div><div className="form-stack compact"><label htmlFor="edit-timezone">Host timezone</label><input id="edit-timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} /></div></div>
