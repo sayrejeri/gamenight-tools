@@ -118,7 +118,7 @@ export function EditEventForm({ eventId, initial, preview }: { eventId: string; 
       const response = await fetch(`/api/events/${eventId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, description: description || null, platformName: platformName || null, subgameName: subgameName || null,
+          name, description: description || null, platformName: platformName || null, subgameName: subgameName || null, gameFieldsTouched,
           gameUrl: gameUrl || null, gameExternalId: gameExternalId || null, gameUniverseId: gameUniverseId || null, gameThumbnailUrl: gameThumbnailUrl || null,
           requiredConnectionType: requiredConnectionType || null,
           startsAt: toIso(dates.startsAt), signupDeadline: toIso(dates.signupDeadline), checkInOpensAt: toIso(dates.checkInOpensAt), checkInDeadline: toIso(dates.checkInDeadline),
