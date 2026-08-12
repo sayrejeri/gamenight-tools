@@ -24,17 +24,23 @@ export function EventDescriptionEditor({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  function commitValue(next: string): boolean {
+    if (next.length > maxLength) return false;
+    onChange(next);
+    return true;
+  }
+
   function replaceSelection(prefix: string, suffix = "", placeholder = "text") {
     const textarea = textareaRef.current;
     if (!textarea) {
-      onChange(`${value}${prefix}${placeholder}${suffix}`);
+      commitValue(`${value}${prefix}${placeholder}${suffix}`);
       return;
     }
     const start = textarea.selectionStart ?? value.length;
     const end = textarea.selectionEnd ?? start;
     const selected = value.slice(start, end) || placeholder;
     const next = `${value.slice(0, start)}${prefix}${selected}${suffix}${value.slice(end)}`;
-    onChange(next);
+    if (!commitValue(next)) return;
     const selectionStart = start + prefix.length;
     const selectionEnd = selectionStart + selected.length;
     requestAnimationFrame(() => {
@@ -46,13 +52,13 @@ export function EventDescriptionEditor({
   function insertAtCursor(text: string) {
     const textarea = textareaRef.current;
     if (!textarea) {
-      onChange(`${value}${text}`);
+      commitValue(`${value}${text}`);
       return;
     }
     const start = textarea.selectionStart ?? value.length;
     const end = textarea.selectionEnd ?? start;
     const next = `${value.slice(0, start)}${text}${value.slice(end)}`;
-    onChange(next);
+    if (!commitValue(next)) return;
     const cursor = start + text.length;
     requestAnimationFrame(() => {
       textarea.focus();
