@@ -59,12 +59,14 @@ export const EVENT_DESCRIPTION_DATE_KEYS = new Set([
   "event.checkin_close",
 ]);
 
-function underscoreRunBounds(text: string, index: number): { start: number; end: number } {
-  let start = index;
+function underscoreRunEnd(text: string, index: number): number {
   let end = index;
-  while (start > 0 && text[start - 1] === "_") start -= 1;
   while (end < text.length && text[end] === "_") end += 1;
-  return { start, end };
+  return end;
+}
+
+function isUnderscoreRunStart(text: string, index: number): boolean {
+  return text[index] === "_" && (index === 0 || text[index - 1] !== "_");
 }
 
 function codePointBefore(text: string, index: number): string | undefined {
@@ -92,16 +94,20 @@ function isWordLike(value: string | undefined): boolean {
 }
 
 export function canOpenUnderscoreEmphasis(text: string, index: number): boolean {
-  const { start, end } = underscoreRunBounds(text, index);
-  const before = codePointBefore(text, start);
+  // Only the first code unit of an underscore run can be a delimiter boundary.
+  // Interior positions return immediately, so long literal runs stay linear to inspect.
+  if (!isUnderscoreRunStart(text, index)) return false;
+  const end = underscoreRunEnd(text, index);
+  const before = codePointBefore(text, index);
   const after = codePointAt(text, end);
   if (!after || /\s/u.test(after)) return false;
   return !isWordLike(before);
 }
 
 export function canCloseUnderscoreEmphasis(text: string, index: number): boolean {
-  const { start, end } = underscoreRunBounds(text, index);
-  const before = codePointBefore(text, start);
+  if (!isUnderscoreRunStart(text, index)) return false;
+  const end = underscoreRunEnd(text, index);
+  const before = codePointBefore(text, index);
   const after = codePointAt(text, end);
   if (!before || /\s/u.test(before)) return false;
   return !isWordLike(after);

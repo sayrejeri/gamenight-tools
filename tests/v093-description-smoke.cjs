@@ -63,6 +63,14 @@ assert.equal(description.canCloseUnderscoreEmphasis("_mode_\u0301value", 5), fal
 assert.equal(description.canOpenUnderscoreEmphasis("__underline__", 0), true);
 assert.equal(description.canCloseUnderscoreEmphasis("__underline__", 11), true);
 
+const longUnderscoreRun = "_".repeat(5000);
+assert.equal(description.canOpenUnderscoreEmphasis(longUnderscoreRun, 0), false);
+assert.equal(description.canCloseUnderscoreEmphasis(longUnderscoreRun, 0), false);
+for (let index = 1; index < longUnderscoreRun.length; index += 1) {
+  assert.equal(description.canOpenUnderscoreEmphasis(longUnderscoreRun, index), false);
+  assert.equal(description.canCloseUnderscoreEmphasis(longUnderscoreRun, index), false);
+}
+
 assert.equal(
   eventGame.resolveUpdatedGameName({
     submittedSubgameName: null,

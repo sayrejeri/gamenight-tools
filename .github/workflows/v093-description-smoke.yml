@@ -42,24 +42,42 @@ jobs:
         shell: powershell
         env:
           REQUESTED_REF: ${{ inputs.ref }}
-          PR_HEAD_REF: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           $ErrorActionPreference = "Stop"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          $targetRef = if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_REF)) { $env:REQUESTED_REF } else { $env:PR_HEAD_REF }
-          if ([string]::IsNullOrWhiteSpace($targetRef)) { throw "Could not determine the branch to test." }
-          if ($targetRef -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+          $isPullRequest = -not [string]::IsNullOrWhiteSpace($env:PR_HEAD_SHA)
+          if ($isPullRequest) {
+            if ([string]::IsNullOrWhiteSpace($env:PR_NUMBER)) { throw "Pull request number is missing." }
+            $safeRef = "pr-$env:PR_NUMBER"
+          } else {
+            $targetRef = $env:REQUESTED_REF
+            if ([string]::IsNullOrWhiteSpace($targetRef)) { throw "Could not determine the branch to test." }
+            if ($targetRef -notmatch '^[A-Za-z0-9._/-]+$') { throw "The requested ref contains unsupported characters." }
+            $safeRef = $targetRef.Replace("/", "-")
+          }
 
-          $safeRef = $targetRef.Replace("/", "-")
           $work = Join-Path $env:RUNNER_TEMP "gamenight-v093-description-$safeRef"
           $nodeRoot = Join-Path $env:RUNNER_TEMP "node22-v093-description"
           if (Test-Path $work) { Remove-Item $work -Recurse -Force }
           if (Test-Path $nodeRoot) { Remove-Item $nodeRoot -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $work, $nodeRoot | Out-Null
 
-          git clone --depth 1 --branch "$targetRef" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
-          Set-Location $work
+          if ($isPullRequest) {
+            git clone --depth 1 "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+            Set-Location $work
+            git fetch --depth 1 origin "refs/pull/$env:PR_NUMBER/head"
+            git checkout --detach FETCH_HEAD
+            $checkedOutSha = (git rev-parse HEAD).Trim()
+            if ($checkedOutSha -ne $env:PR_HEAD_SHA) {
+              throw "Checked out $checkedOutSha but expected PR head $env:PR_HEAD_SHA."
+            }
+          } else {
+            git clone --depth 1 --branch "$targetRef" "https://github.com/$env:GITHUB_REPOSITORY.git" $work
+            Set-Location $work
+          }
 
           $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
           $nodeVersion = ($versions | Where-Object { $_.version -like "v22.*" } | Select-Object -First 1).version
