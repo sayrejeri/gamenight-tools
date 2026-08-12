@@ -74,8 +74,7 @@ export function EventDescriptionEditor({
         <button type="button" title="Bullet list" onClick={() => insertAtCursor("- ")}>• List</button>
         <button type="button" title="Quote" onClick={() => insertAtCursor("> ")}>❯ Quote</button>
         <label className="event-description-variable-picker">
-          <span className="sr-only">Insert dynamic event value</span>
-          <select value="" onChange={(event) => { if (event.target.value) insertAtCursor(event.target.value); }}>
+          <select aria-label="Insert dynamic event value" value="" onChange={(event) => { if (event.target.value) insertAtCursor(event.target.value); }}>
             <option value="">Insert value…</option>
             {groups.map((group) => (
               <optgroup label={group} key={group}>
