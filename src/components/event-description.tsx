@@ -2,6 +2,8 @@ import { Fragment, type ReactNode } from "react";
 import { LocalDateTime } from "@/components/local-date-time";
 import {
   EVENT_DESCRIPTION_DATE_KEYS,
+  canCloseUnderscoreEmphasis,
+  canOpenUnderscoreEmphasis,
   resolveEventDescriptionValue,
   type EventDescriptionContext,
 } from "@/lib/event-description";
@@ -19,13 +21,18 @@ function delimiterRunLength(text: string, index: number, delimiter: "*" | "_"): 
 }
 
 function closesAt(text: string, index: number, marker: string): boolean {
-  if (marker === "*" || marker === "_") {
+  if (marker === "*") {
     const run = delimiterRunLength(text, index, marker);
-    // A two-character run opens/closes bold or underline rather than closing
-    // single-character emphasis. Odd/longer runs can close the inner single
-    // marker first and leave the remaining pair for its outer formatter.
+    // A two-character run opens/closes bold rather than closing single-character
+    // emphasis. Odd/longer runs can close the inner single marker first and leave
+    // the remaining pair for its outer formatter.
     return run === 1 || run >= 3;
   }
+  if (marker === "_") {
+    const run = delimiterRunLength(text, index, marker);
+    return (run === 1 || run >= 3) && canCloseUnderscoreEmphasis(text, index);
+  }
+  if (marker === "__") return text.startsWith(marker, index) && canCloseUnderscoreEmphasis(text, index);
   return text.startsWith(marker, index);
 }
 
@@ -145,7 +152,7 @@ function parseInlineRange(
       continue;
     }
 
-    if (text.startsWith("__", index)) {
+    if (text.startsWith("__", index) && canOpenUnderscoreEmphasis(text, index)) {
       flushPlain(index);
       const inner = parseInlineRange(text, context, `${prefix}-underline-${part}`, index + 2, "__");
       if (inner.closed) {
@@ -160,7 +167,7 @@ function parseInlineRange(
       continue;
     }
 
-    if (text[index] === "_") {
+    if (text[index] === "_" && canOpenUnderscoreEmphasis(text, index)) {
       flushPlain(index);
       const inner = parseInlineRange(text, context, `${prefix}-italic-underscore-${part}`, index + 1, "_");
       if (inner.closed) {
