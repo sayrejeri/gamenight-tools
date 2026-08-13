@@ -27,6 +27,8 @@ type TeamPayload = {
   robloxGame?: { placeId?: string | null; universeId?: string | null; gameUrl?: string | null; thumbnailUrl?: string | null } | null;
 };
 
+type WorkspaceStatusRow = RowDataPacket & { profile_status: string };
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ requestId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -46,7 +48,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
   if (!profileRequest) return NextResponse.json({ error: "Profile request not found." }, { status: 404 });
   if (!["PENDING", "CHANGES_REQUESTED"].includes(profileRequest.status)) return NextResponse.json({ error: "This request has already been reviewed." }, { status: 409 });
 
-  const canStillApproveRequestedHome = profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id
+  let requestedHomeApproved = false;
+  if (profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id) {
+    const workspaceRows = await query<WorkspaceStatusRow[]>(
+      `SELECT profile_status FROM workspaces WHERE id = ? LIMIT 1`,
+      [profileRequest.home_workspace_id],
+    );
+    requestedHomeApproved = workspaceRows[0]?.profile_status === "APPROVED";
+  }
+  const canStillApproveRequestedHome = profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id && requestedHomeApproved
     ? await hasWorkspacePermission(profileRequest.applicant_user_id, profileRequest.home_workspace_id, "MANAGE_TEAMS")
     : false;
 
@@ -92,7 +102,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
              roblox_community_url, timezone, profile_status, verification_level, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
           [createdProfileId, profileRequest.discord_guild_id, profileRequest.requested_name, iconUrl, profileRequest.banner_url,
-           profileRequest.description, profileRequest.discord_invite_url, profileRequest.main_platform, profileRequest.roblox_community_url,
+           profileRequest.description, profileRequest.discord_invite_url, profileRequest.main_game ?? profileRequest.main_platform, profileRequest.roblox_community_url,
            profileRequest.timezone || "America/Detroit", parsed.data.verificationLevel, profileRequest.applicant_user_id],
         );
         await connection.execute(`INSERT INTO workspace_owner_claims (workspace_id, discord_id, created_by) VALUES (?, ?, ?)`, [createdProfileId, profileRequest.applicant_discord_id, session.userId]);

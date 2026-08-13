@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
            roblox_community_url, timezone, profile_status, verification_level, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', 'APPROVED', ?)`,
         [createdProfileId, managedGuild.guild_id, data.name, iconUrl, data.bannerUrl || null, data.description || null,
-         data.discordInviteUrl || null, data.mainPlatform || null, data.robloxCommunityUrl || null, timezone, session.userId],
+         data.discordInviteUrl || null, mainGame || data.mainPlatform || null, data.robloxCommunityUrl || null, timezone, session.userId],
       );
       await connection.execute(
         `INSERT INTO workspace_owner_claims (workspace_id, discord_id, created_by) VALUES (?, ?, ?)`,

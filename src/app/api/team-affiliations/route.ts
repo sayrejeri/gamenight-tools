@@ -169,6 +169,13 @@ export async function PATCH(request: NextRequest) {
        WHERE team_id = ? AND workspace_id = ?`,
       [nextStatus, session.userId, teamId, workspaceId],
     );
+    if (decision === "REVOKE") {
+      await connection.execute(
+        `UPDATE teams SET home_workspace_id = NULL, updated_at = CURRENT_TIMESTAMP(3)
+         WHERE id = ? AND home_workspace_id = ?`,
+        [teamId, workspaceId],
+      );
+    }
   });
 
   if (decision !== "REVOKE" && affiliation.initiated_by_user_id !== String(session.userId)) {
