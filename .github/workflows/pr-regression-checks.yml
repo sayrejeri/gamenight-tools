@@ -1,0 +1,81 @@
+name: PR regression checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to test
+        required: true
+        default: main
+        type: string
+
+concurrency:
+  group: pr-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  regression-checks:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.ref }}
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run regression smoke tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $PWD ".pr-regression-test"
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          $smokeConfigPath = Join-Path $PWD ".pr-regression-tsconfig.json"
+          $smokeConfig = @{
+            compilerOptions = @{
+              target = "ES2022"
+              module = "commonjs"
+              lib = @("ES2022", "DOM")
+              outDir = ".pr-regression-test"
+              skipLibCheck = $true
+              esModuleInterop = $true
+            }
+            files = @(
+              "src/components/bracket/bracket-model.ts",
+              "src/lib/event-description.ts",
+              "src/lib/event-game.ts"
+            )
+          } | ConvertTo-Json -Depth 4
+          $smokeConfig | Set-Content -Path $smokeConfigPath -Encoding UTF8
+          npx tsc -p "$smokeConfigPath"
+          if ($LASTEXITCODE -ne 0) { throw "Could not compile regression helpers." }
+
+          $compiledModel = Get-ChildItem -Path $out -Filter "bracket-model.js" -Recurse | Select-Object -First 1
+          $compiledDescription = Get-ChildItem -Path $out -Filter "event-description.js" -Recurse | Select-Object -First 1
+          $compiledGame = Get-ChildItem -Path $out -Filter "event-game.js" -Recurse | Select-Object -First 1
+          if (-not $compiledModel) { throw "Compiled bracket-model.js was not found." }
+          if (-not $compiledDescription) { throw "Compiled event-description.js was not found." }
+          if (-not $compiledGame) { throw "Compiled event-game.js was not found." }
+
+          node "tests/v070-competition-smoke.cjs" "$($compiledModel.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Competition regression smoke tests failed." }
+
+          node "tests/v093-description-smoke.cjs" "$($compiledDescription.FullName)" "$($compiledGame.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Description regression smoke tests failed." }
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
