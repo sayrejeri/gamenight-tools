@@ -15,12 +15,15 @@ function entrantNameInputs(root: HTMLDivElement): HTMLInputElement[] {
   return Array.from(root.querySelectorAll<HTMLInputElement>('.participant-editor input[aria-label^="Entrant "]'));
 }
 
-function setNativeInputValue(input: HTMLInputElement, value: string) {
+function setNativeInputValue(input: HTMLInputElement, value: string, forceEnable = false) {
+  const wasDisabled = input.disabled;
+  if (forceEnable && wasDisabled) input.disabled = false;
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   if (setter) setter.call(input, value);
   else input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  if (forceEnable && wasDisabled) input.disabled = true;
 }
 
 export function BracketGenerator(props: Props) {
@@ -39,7 +42,7 @@ export function BracketGenerator(props: Props) {
       savedEntrantPool.current = currentNames;
       window.setTimeout(() => {
         const countInput = rootRef.current?.querySelector<HTMLInputElement>("#participant-count");
-        if (countInput && Number(countInput.value) !== 3) setNativeInputValue(countInput, "3");
+        if (countInput && Number(countInput.value) !== 3) setNativeInputValue(countInput, "3", true);
       }, 0);
       return;
     }
