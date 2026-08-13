@@ -4,7 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
-import { hasPlatformPermission } from "@/lib/permissions";
+import { hasPlatformPermission, hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
 const reviewSchema = z.object({
@@ -27,6 +27,8 @@ type TeamPayload = {
   robloxGame?: { placeId?: string | null; universeId?: string | null; gameUrl?: string | null; thumbnailUrl?: string | null } | null;
 };
 
+type WorkspaceStatusRow = RowDataPacket & { profile_status: string };
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ requestId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -46,6 +48,18 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
   if (!profileRequest) return NextResponse.json({ error: "Profile request not found." }, { status: 404 });
   if (!["PENDING", "CHANGES_REQUESTED"].includes(profileRequest.status)) return NextResponse.json({ error: "This request has already been reviewed." }, { status: 409 });
 
+  let requestedHomeApproved = false;
+  if (profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id) {
+    const workspaceRows = await query<WorkspaceStatusRow[]>(
+      `SELECT profile_status FROM workspaces WHERE id = ? LIMIT 1`,
+      [profileRequest.home_workspace_id],
+    );
+    requestedHomeApproved = workspaceRows[0]?.profile_status === "APPROVED";
+  }
+  const canStillApproveRequestedHome = profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id && requestedHomeApproved
+    ? await hasWorkspacePermission(profileRequest.applicant_user_id, profileRequest.home_workspace_id, "MANAGE_TEAMS")
+    : false;
+
   let createdProfileId: string | null = null;
   await withTransaction(async (connection) => {
     if (parsed.data.decision === "APPROVED") {
@@ -53,6 +67,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
       if (profileRequest.request_type === "TEAM") {
         const payload = profileRequest.payload_json ? JSON.parse(profileRequest.payload_json) as TeamPayload : {};
         const game = payload.robloxGame ?? null;
+        const approvedHomeWorkspaceId = canStillApproveRequestedHome ? profileRequest.home_workspace_id : null;
         await connection.execute(
           `INSERT INTO teams
             (id, name, slug, tag, description, logo_url, banner_url, main_platform, main_game,
@@ -62,12 +77,22 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
           [createdProfileId, profileRequest.requested_name, profileRequest.requested_slug, payload.teamTag ?? null, profileRequest.description,
            profileRequest.logo_url, profileRequest.banner_url, profileRequest.main_platform, profileRequest.main_game,
            game?.placeId ?? null, game?.universeId ?? null, game?.gameUrl ?? null, game?.thumbnailUrl ?? null,
-           payload.region ?? null, parsed.data.verificationLevel, profileRequest.home_workspace_id, profileRequest.applicant_user_id, session.userId],
+           payload.region ?? null, parsed.data.verificationLevel, approvedHomeWorkspaceId, profileRequest.applicant_user_id, session.userId],
         );
         await connection.execute(
           `INSERT INTO team_members (team_id, user_id, role, status, invited_by, joined_at)
            VALUES (?, ?, 'OWNER', 'ACTIVE', ?, CURRENT_TIMESTAMP(3))`, [createdProfileId, profileRequest.applicant_user_id, session.userId],
         );
+        if (profileRequest.home_workspace_id) {
+          await connection.execute(
+            `INSERT INTO team_workspace_affiliations
+              (team_id, workspace_id, status, initiated_by_scope, initiated_by_user_id, reviewed_by_user_id, reviewed_at)
+             VALUES (?, ?, ?, 'TEAM', ?, ?, ?)`,
+            [createdProfileId, profileRequest.home_workspace_id, canStillApproveRequestedHome ? "APPROVED" : "PENDING",
+             profileRequest.applicant_user_id, canStillApproveRequestedHome ? session.userId : null,
+             canStillApproveRequestedHome ? new Date() : null],
+          );
+        }
       } else {
         if (!profileRequest.discord_guild_id) throw new Error("Approved server request is missing its Discord server ID.");
         const iconUrl = profileRequest.logo_url || (profileRequest.guild_icon_hash ? `https://cdn.discordapp.com/icons/${profileRequest.discord_guild_id}/${profileRequest.guild_icon_hash}.png?size=512` : null);
@@ -77,7 +102,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
              roblox_community_url, timezone, profile_status, verification_level, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
           [createdProfileId, profileRequest.discord_guild_id, profileRequest.requested_name, iconUrl, profileRequest.banner_url,
-           profileRequest.description, profileRequest.discord_invite_url, profileRequest.main_platform, profileRequest.roblox_community_url,
+           profileRequest.description, profileRequest.discord_invite_url, profileRequest.main_game ?? profileRequest.main_platform, profileRequest.roblox_community_url,
            profileRequest.timezone || "America/Detroit", parsed.data.verificationLevel, profileRequest.applicant_user_id],
         );
         await connection.execute(`INSERT INTO workspace_owner_claims (workspace_id, discord_id, created_by) VALUES (?, ?, ?)`, [createdProfileId, profileRequest.applicant_discord_id, session.userId]);
