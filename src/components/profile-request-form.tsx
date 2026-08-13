@@ -38,9 +38,11 @@ export function ProfileRequestForm({ guilds, workspaces }: { guilds: Guild[]; wo
     setBusy(true); setMessage("");
     try {
       const response = await fetch("/api/profile-requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestType: type, ...draft }) });
-      const body = await response.json() as { error?: string };
+      const body = await response.json() as { error?: string; createdProfileId?: string | null; status?: string };
       if (!response.ok) throw new Error(body.error ?? "Profile request could not be submitted.");
-      setMessage("Profile request submitted for staff review.");
+      setMessage(type === "SERVER" && body.status === "APPROVED" && body.createdProfileId
+        ? "Server profile created. Manual server-profile approval is currently disabled."
+        : "Profile request submitted for staff review.");
       setDrafts((current) => ({ ...current, [type]: createEmptyDraft() }));
       router.refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : "Profile request could not be submitted."); }

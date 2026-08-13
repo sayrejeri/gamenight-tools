@@ -4,7 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { query, withTransaction } from "@/lib/db";
-import { hasPlatformPermission } from "@/lib/permissions";
+import { hasPlatformPermission, hasWorkspacePermission } from "@/lib/permissions";
 import { writeAuditLog } from "@/lib/audit";
 
 const reviewSchema = z.object({
@@ -46,6 +46,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
   if (!profileRequest) return NextResponse.json({ error: "Profile request not found." }, { status: 404 });
   if (!["PENDING", "CHANGES_REQUESTED"].includes(profileRequest.status)) return NextResponse.json({ error: "This request has already been reviewed." }, { status: 409 });
 
+  const canStillApproveRequestedHome = profileRequest.request_type === "TEAM" && profileRequest.home_workspace_id
+    ? await hasWorkspacePermission(profileRequest.applicant_user_id, profileRequest.home_workspace_id, "MANAGE_TEAMS")
+    : false;
+
   let createdProfileId: string | null = null;
   await withTransaction(async (connection) => {
     if (parsed.data.decision === "APPROVED") {
@@ -53,6 +57,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
       if (profileRequest.request_type === "TEAM") {
         const payload = profileRequest.payload_json ? JSON.parse(profileRequest.payload_json) as TeamPayload : {};
         const game = payload.robloxGame ?? null;
+        const approvedHomeWorkspaceId = canStillApproveRequestedHome ? profileRequest.home_workspace_id : null;
         await connection.execute(
           `INSERT INTO teams
             (id, name, slug, tag, description, logo_url, banner_url, main_platform, main_game,
@@ -62,12 +67,22 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ r
           [createdProfileId, profileRequest.requested_name, profileRequest.requested_slug, payload.teamTag ?? null, profileRequest.description,
            profileRequest.logo_url, profileRequest.banner_url, profileRequest.main_platform, profileRequest.main_game,
            game?.placeId ?? null, game?.universeId ?? null, game?.gameUrl ?? null, game?.thumbnailUrl ?? null,
-           payload.region ?? null, parsed.data.verificationLevel, profileRequest.home_workspace_id, profileRequest.applicant_user_id, session.userId],
+           payload.region ?? null, parsed.data.verificationLevel, approvedHomeWorkspaceId, profileRequest.applicant_user_id, session.userId],
         );
         await connection.execute(
           `INSERT INTO team_members (team_id, user_id, role, status, invited_by, joined_at)
            VALUES (?, ?, 'OWNER', 'ACTIVE', ?, CURRENT_TIMESTAMP(3))`, [createdProfileId, profileRequest.applicant_user_id, session.userId],
         );
+        if (profileRequest.home_workspace_id) {
+          await connection.execute(
+            `INSERT INTO team_workspace_affiliations
+              (team_id, workspace_id, status, initiated_by_scope, initiated_by_user_id, reviewed_by_user_id, reviewed_at)
+             VALUES (?, ?, ?, 'TEAM', ?, ?, ?)`,
+            [createdProfileId, profileRequest.home_workspace_id, canStillApproveRequestedHome ? "APPROVED" : "PENDING",
+             profileRequest.applicant_user_id, canStillApproveRequestedHome ? session.userId : null,
+             canStillApproveRequestedHome ? new Date() : null],
+          );
+        }
       } else {
         if (!profileRequest.discord_guild_id) throw new Error("Approved server request is missing its Discord server ID.");
         const iconUrl = profileRequest.logo_url || (profileRequest.guild_icon_hash ? `https://cdn.discordapp.com/icons/${profileRequest.discord_guild_id}/${profileRequest.guild_icon_hash}.png?size=512` : null);
