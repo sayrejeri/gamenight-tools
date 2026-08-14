@@ -41,6 +41,8 @@ CREATE TABLE discord_bot_jobs (
   user_id BIGINT UNSIGNED NULL,
   event_id CHAR(36) NULL,
   match_id CHAR(36) NULL,
+  role_kind ENUM('COMPETITOR','CHAMPION') NULL,
+  discord_role_id VARCHAR(32) NULL,
   job_type ENUM('DM_SIGNUP_REMINDER','DM_CHECKIN_REMINDER','DM_MATCH_REMINDER','DM_RESULT_REMINDER','ANNOUNCE_EVENT','ANNOUNCE_MATCH_READY','ANNOUNCE_RESULT','ANNOUNCE_WINNER','CREATE_MATCH_CHANNEL','DELETE_MATCH_CHANNEL','SYNC_ROLE') NOT NULL,
   dedupe_key VARCHAR(191) NULL,
   payload_json LONGTEXT NULL,
@@ -59,6 +61,7 @@ CREATE TABLE discord_bot_jobs (
   KEY discord_bot_jobs_workspace_idx (workspace_id, created_at),
   KEY discord_bot_jobs_user_idx (user_id, created_at),
   KEY discord_bot_jobs_match_idx (match_id, job_type, status),
+  KEY discord_bot_jobs_role_idx (workspace_id, user_id, role_kind, discord_role_id, status),
   CONSTRAINT discord_bot_jobs_workspace_fk FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
   CONSTRAINT discord_bot_jobs_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT discord_bot_jobs_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
@@ -90,4 +93,22 @@ CREATE TABLE discord_match_channels (
   CONSTRAINT discord_match_channels_match_fk FOREIGN KEY (match_id) REFERENCES bracket_matches(id) ON DELETE CASCADE,
   CONSTRAINT discord_match_channels_workspace_fk FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
   CONSTRAINT discord_match_channels_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE discord_role_assignments (
+  workspace_id CHAR(36) NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role_kind ENUM('COMPETITOR','CHAMPION') NOT NULL,
+  role_id VARCHAR(32) NOT NULL,
+  source_event_id CHAR(36) NULL,
+  status ENUM('ACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
+  assigned_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  removed_at DATETIME(3) NULL,
+  PRIMARY KEY (workspace_id, user_id, role_kind, role_id),
+  KEY discord_role_assignments_status_idx (workspace_id, role_kind, status, updated_at),
+  KEY discord_role_assignments_user_idx (user_id, status),
+  CONSTRAINT discord_role_assignments_workspace_fk FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  CONSTRAINT discord_role_assignments_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT discord_role_assignments_event_fk FOREIGN KEY (source_event_id) REFERENCES events(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
