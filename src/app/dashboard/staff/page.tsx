@@ -37,7 +37,7 @@ export default async function StaffDashboardPage() {
   const canModerate = access.permissions.includes("MODERATE_USERS") || access.permissions.includes("VIEW_REPORTS");
   const canManageStaff = access.permissions.includes("MANAGE_PLATFORM_STAFF");
   const canViewAudit = access.permissions.includes("VIEW_BASIC_AUDIT") || access.permissions.includes("VIEW_FULL_AUDIT");
-  const canManageTeams = access.role === "OWNER" || access.role === "ADMIN";
+  const canManageTeams = access.permissions.includes("MANAGE_TEAMS");
 
   const [requestResult, reportResult, staffResult, auditResult, countResult, recentUserResult] = await Promise.all([
     canReviewProfiles ? safeStaffQuery("profile requests", query<RequestRow[]>(
