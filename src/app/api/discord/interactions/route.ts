@@ -143,7 +143,7 @@ export async function POST(request: Request) {
     );
     const bracket = brackets[0];
     if (!bracket) return interactionMessage(`**${workspace.name}** does not have a generated competition to show right now.`);
-    return interactionMessage(`🏆 **${bracket.event_name}**\n${bracket.format.replaceAll("_", " ").toLowerCase()} · ${bracket.bracket_status.toLowerCase()}\n${baseUrl}/dashboard/events/${bracket.event_id}`);
+    return interactionMessage(`🏆 **${bracket.event_name}**\n${bracket.format.replaceAll("_", " ").toLowerCase()} · ${bracket.bracket_status.toLowerCase()}\n${baseUrl}/dashboard/events/${bracket.event_id}/bracket`);
   }
 
   if (subcommand === "leaderboard") {
