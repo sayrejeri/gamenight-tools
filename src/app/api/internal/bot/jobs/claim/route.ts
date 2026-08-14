@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
        SET status = CASE WHEN attempts >= 5 THEN 'FAILED' ELSE 'PENDING' END,
            locked_at = NULL, locked_by = NULL,
            last_error = COALESCE(last_error, 'Worker lock expired before completion.')
-       WHERE status = 'PROCESSING' AND locked_at < (CURRENT_TIMESTAMP(3) - INTERVAL 10 MINUTE)`,
+       WHERE status = 'PROCESSING' AND locked_at < (CURRENT_TIMESTAMP(3) - INTERVAL 2 MINUTE)`,
     );
 
     const [rows] = await connection.query<JobRow[]>(
