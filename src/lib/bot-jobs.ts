@@ -25,6 +25,9 @@ type WorkspaceBotGateRow = RowDataPacket & {
   temporary_match_channels_enabled: number;
   role_sync_enabled: number;
   announcement_channel_id: string | null;
+  match_category_id: string | null;
+  competitor_role_id: string | null;
+  champion_role_id: string | null;
 };
 
 type UserBotGateRow = RowDataPacket & {
@@ -42,7 +45,9 @@ function executorOrPool(executor?: BotJobExecutor): BotJobExecutor {
 function workspaceToggleForJob(type: BotJobType): keyof WorkspaceBotGateRow | null {
   if (type.startsWith("DM_")) return "dm_reminders_enabled";
   if (type.startsWith("ANNOUNCE_")) return "announcements_enabled";
-  if (type === "CREATE_MATCH_CHANNEL" || type === "DELETE_MATCH_CHANNEL") return "temporary_match_channels_enabled";
+  if (type === "CREATE_MATCH_CHANNEL") return "temporary_match_channels_enabled";
+  // Cleanup must remain possible after a manager disables new temporary channels.
+  if (type === "DELETE_MATCH_CHANNEL") return null;
   if (type === "SYNC_ROLE") return "role_sync_enabled";
   return null;
 }
@@ -73,7 +78,8 @@ export async function enqueueDiscordBotJob(input: {
               COALESCE(wbs.announcements_enabled, 0) AS announcements_enabled,
               COALESCE(wbs.temporary_match_channels_enabled, 0) AS temporary_match_channels_enabled,
               COALESCE(wbs.role_sync_enabled, 0) AS role_sync_enabled,
-              wbs.announcement_channel_id
+              wbs.announcement_channel_id, wbs.match_category_id,
+              wbs.competitor_role_id, wbs.champion_role_id
        FROM workspaces w
        LEFT JOIN workspace_bot_settings wbs ON wbs.workspace_id = w.id
        WHERE w.id = ? LIMIT 1`,
@@ -84,6 +90,14 @@ export async function enqueueDiscordBotJob(input: {
     const toggle = workspaceToggleForJob(input.type);
     if (toggle && !workspace[toggle]) return false;
     if (input.type.startsWith("ANNOUNCE_") && !workspace.announcement_channel_id) return false;
+    if (input.type === "CREATE_MATCH_CHANNEL" && !workspace.match_category_id) return false;
+    if (input.type === "SYNC_ROLE") {
+      const roleKind = input.payload && typeof input.payload === "object" && "roleKind" in input.payload
+        ? String((input.payload as { roleKind?: unknown }).roleKind ?? "")
+        : "";
+      if (roleKind === "CHAMPION" && !workspace.champion_role_id) return false;
+      if (roleKind !== "CHAMPION" && !workspace.competitor_role_id) return false;
+    }
   }
 
   if (input.type.startsWith("DM_")) {
