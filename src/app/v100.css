@@ -68,7 +68,34 @@
 }
 
 @media (max-width: 640px) {
+  .profile-badge-strip {
+    gap: 7px;
+  }
+
+  .profile-mini-badge {
+    width: 34px;
+    height: 34px;
+  }
+
   .profile-mini-badge-tooltip {
-    display: none;
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 84px;
+    width: auto;
+    max-width: none;
+    transform: translateY(4px);
+  }
+
+  .profile-mini-badge:hover .profile-mini-badge-tooltip,
+  .profile-mini-badge:focus-visible .profile-mini-badge-tooltip {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-mini-badge,
+  .profile-mini-badge-tooltip {
+    transition: none;
   }
 }
