@@ -146,7 +146,7 @@ export async function POST(request: Request) {
         type: "DM_MATCH_REMINDER",
         dedupeKey: `match-reminder:${match.match_id}:${userId}`,
         payload: {
-          content: `⚔️ Your **${match.event_name}** match is scheduled soon.\nRound ${match.round_number}, Match ${match.match_number} · ${discordTimestamp(match.scheduled_at)}\n${baseUrl}/dashboard/events/${match.event_id}/match-center`,
+          content: `⚔️ Your **${match.event_name}** match is scheduled soon.\nRound ${match.round_number}, Match ${match.match_number} · ${discordTimestamp(match.scheduled_at)}\n${baseUrl}/dashboard/events/${match.event_id}/matches`,
         },
       });
       if (inserted) queued += 1;
