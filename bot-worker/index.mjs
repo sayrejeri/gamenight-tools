@@ -2,6 +2,7 @@ const APP_URL = (process.env.GNT_APP_URL || "").replace(/\/$/, "");
 const WORKER_SECRET = process.env.BOT_WORKER_SECRET || "";
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || "";
 const WORKER_ID = (process.env.BOT_WORKER_ID || `four-seasons-${process.pid}`).slice(0, 120);
+const WORKER_VERSION = (process.env.BOT_WORKER_VERSION || "1.0.0-beta.1").slice(0, 40);
 const POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.BOT_POLL_SECONDS || 10) * 1000));
 const SCHEDULE_MS = Math.max(30000, Math.min(300000, Number(process.env.BOT_SCHEDULE_SECONDS || 60) * 1000));
 const DISCORD_API_BASE = "https://discord.com/api/v10";
@@ -134,7 +135,12 @@ async function runSchedulerIfDue() {
 
 async function runOnce() {
   await runSchedulerIfDue();
-  const claim = await websiteRequest("/api/internal/bot/jobs/claim", { workerId: WORKER_ID, limit: 10 });
+  const claim = await websiteRequest("/api/internal/bot/jobs/claim", {
+    workerId: WORKER_ID,
+    workerVersion: WORKER_VERSION,
+    metadata: { node: process.version, platform: process.platform, arch: process.arch },
+    limit: 10,
+  });
   const jobs = Array.isArray(claim.jobs) ? claim.jobs : [];
   for (const job of jobs) {
     try {
@@ -151,7 +157,7 @@ async function runOnce() {
 }
 
 async function main() {
-  console.log(`Game Night Tools bot worker started as ${WORKER_ID}. Polling every ${POLL_MS / 1000}s; scheduler every ${SCHEDULE_MS / 1000}s.`);
+  console.log(`Game Night Tools bot worker ${WORKER_VERSION} started as ${WORKER_ID}. Polling every ${POLL_MS / 1000}s; scheduler every ${SCHEDULE_MS / 1000}s.`);
   while (!stopping) {
     try {
       const count = await runOnce();
