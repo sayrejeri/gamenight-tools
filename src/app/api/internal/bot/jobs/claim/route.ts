@@ -111,16 +111,12 @@ function isJobAllowed(job: JobRow, payload: Payload): boolean {
   }
 
   if (job.job_type === "DELETE_MATCH_CHANNEL") {
-    // Cleanup remains valid even when creation has since been disabled.
     return Boolean(job.active_match_channel);
   }
 
   if (job.job_type === "SYNC_ROLE") {
     if (!isSnowflake(job.target_discord_id) || !job.role_kind || !isSnowflake(job.discord_role_id)) return false;
     const action = payload.action === "REMOVE" ? "REMOVE" : "ADD";
-
-    // Removal targets a role that Game Night Tools actually recorded as assigned.
-    // It remains allowed after role sync is disabled or the configured role changes.
     if (action === "REMOVE") return Boolean(job.active_role_assignment);
 
     if (!job.role_sync_enabled) return false;
@@ -257,7 +253,7 @@ export async function POST(request: NextRequest) {
     if (cancelledIds.length) {
       await connection.query(
         `UPDATE discord_bot_jobs
-         SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP(3), locked_at = NULL, locked_by = NULL,
+         SET status = 'CANCELLED', dedupe_key = NULL, completed_at = CURRENT_TIMESTAMP(3), locked_at = NULL, locked_by = NULL,
              last_error = 'Cancelled before delivery because current settings or competition state no longer allow this job.'
          WHERE id IN (${cancelledIds.map(() => "?").join(",")}) AND status = 'PENDING'`,
         cancelledIds,
