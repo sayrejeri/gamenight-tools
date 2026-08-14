@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { readSession } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { query, withTransaction } from "@/lib/db";
-import { fetchDiscordBotGuild, isDiscordBotConfigured } from "@/lib/discord-bot";
+import { fetchDiscordBotGuild, isDiscordBotConfigured, registerDiscordGuildCommands } from "@/lib/discord-bot";
 import { hasWorkspacePermission } from "@/lib/permissions";
 
 type WorkspaceRow = RowDataPacket & {
@@ -52,10 +52,25 @@ export async function POST(_request: Request, context: { params: Promise<{ works
       });
     }
 
+    let commandsRegistered = false;
+    let commandWarning: string | null = null;
+    if (connected) {
+      try {
+        await registerDiscordGuildCommands(workspace.discord_guild_id);
+        commandsRegistered = true;
+      } catch (error) {
+        console.error("Discord guild command registration failed", error);
+        commandWarning = "The bot is connected, but its beta slash commands could not be registered yet.";
+      }
+    }
+
     return NextResponse.json({
       connected,
+      commandsRegistered,
       guildName: guild?.name ?? null,
-      message: connected ? `Discord bot connected to ${guild?.name ?? workspace.name}.` : "The bot is not currently installed in this Discord server.",
+      message: connected
+        ? `${`Discord bot connected to ${guild?.name ?? workspace.name}.`}${commandsRegistered ? " /gnt commands are registered." : commandWarning ? ` ${commandWarning}` : ""}`
+        : "The bot is not currently installed in this Discord server.",
     });
   } catch (error) {
     console.error("Discord bot connection check failed", error);
