@@ -78,6 +78,9 @@ jobs:
           node "tests/v093-description-smoke.cjs" "$($compiledDescription.FullName)" "$($compiledGame.FullName)"
           if ($LASTEXITCODE -ne 0) { throw "Description regression smoke tests failed." }
 
+      - name: Check v1.0 bot migration schema
+        run: node tests/v100-bot-schema-smoke.cjs
+
       - name: Check Four Seasons worker syntax
         run: node --check bot-worker/index.mjs
 
