@@ -158,9 +158,13 @@ export async function DELETE(request: NextRequest) {
   if (!rows[0]) return NextResponse.json({ error: "Connection not found." }, { status: 404 });
 
   if (rows[0].source === "DISCORD") {
-    // Keep a hidden tombstone so a later Discord refresh does not silently re-add an identity the user removed.
+    // Keep a tombstone so Discord refreshes respect the removal, but move it out of
+    // the normal connection type namespace so event/profile consumers cannot select it.
     await getPool().execute(
-      `UPDATE user_connections SET is_visible = -1, updated_at = CURRENT_TIMESTAMP(3)
+      `UPDATE user_connections
+       SET connection_type = LEFT(CONCAT('REMOVED:', connection_type), 50),
+           is_visible = -1,
+           updated_at = CURRENT_TIMESTAMP(3)
        WHERE id = ? AND user_id = ? AND source = 'DISCORD'`,
       [id, session.userId],
     );
