@@ -40,6 +40,7 @@ CREATE TABLE discord_bot_jobs (
   workspace_id CHAR(36) NULL,
   user_id BIGINT UNSIGNED NULL,
   event_id CHAR(36) NULL,
+  match_id CHAR(36) NULL,
   job_type ENUM('DM_SIGNUP_REMINDER','DM_CHECKIN_REMINDER','DM_MATCH_REMINDER','DM_RESULT_REMINDER','ANNOUNCE_EVENT','ANNOUNCE_MATCH_READY','ANNOUNCE_RESULT','ANNOUNCE_WINNER','CREATE_MATCH_CHANNEL','DELETE_MATCH_CHANNEL','SYNC_ROLE') NOT NULL,
   dedupe_key VARCHAR(191) NULL,
   payload_json LONGTEXT NULL,
@@ -57,9 +58,11 @@ CREATE TABLE discord_bot_jobs (
   KEY discord_bot_jobs_due_idx (status, scheduled_at),
   KEY discord_bot_jobs_workspace_idx (workspace_id, created_at),
   KEY discord_bot_jobs_user_idx (user_id, created_at),
+  KEY discord_bot_jobs_match_idx (match_id, job_type, status),
   CONSTRAINT discord_bot_jobs_workspace_fk FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
   CONSTRAINT discord_bot_jobs_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT discord_bot_jobs_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+  CONSTRAINT discord_bot_jobs_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+  CONSTRAINT discord_bot_jobs_match_fk FOREIGN KEY (match_id) REFERENCES bracket_matches(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE discord_bot_workers (
