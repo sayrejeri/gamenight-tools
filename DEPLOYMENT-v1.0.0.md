@@ -20,7 +20,7 @@ Current scope includes:
 - event/check-in/match/result-confirmation DMs;
 - event/match-ready/result/winner announcements;
 - idempotent private tournament match channels and cleanup;
-- competitor/champion Discord role sync;
+- exact-role competitor/champion Discord synchronization with tracked assignment reconciliation;
 - worker heartbeat and queue-health UI;
 - mobile/accessibility/navigation/profile polish.
 
@@ -34,17 +34,18 @@ database/011_v100_discord_bot_beta.sql
 
 Do not rerun migrations `001` through `010`, and do not rerun `011` after success.
 
-Migration 011 creates:
+Migration 011 currently creates **six** tables:
 
 - `workspace_bot_settings`
 - `user_discord_bot_preferences`
 - `discord_bot_jobs`
 - `discord_bot_workers`
 - `discord_match_channels`
+- `discord_role_assignments`
 
-It also adds persisted bracket-match references to Discord jobs so match automation can be validated and deduplicated safely.
+Discord jobs persist bracket-match references plus exact role kind/role IDs when applicable. Successful bot role assignments are persisted separately so cleanup can remove the historical Discord role actually assigned even after workspace settings change.
 
-The v0.9.5 production schema expects 50 base tables after migration 010. Migration 011 adds five, so the current expected total is **55 base tables**.
+The v0.9.5 production schema expects 50 base tables after migration 010. Migration 011 currently adds six, so the expected total is **56 base tables**.
 
 ```sql
 SELECT COUNT(*) AS table_count
@@ -56,7 +57,7 @@ WHERE table_schema = DATABASE()
 Current expected result:
 
 ```text
-55
+56
 ```
 
 If later v1.0 development adds another migration/table, update this runbook before release.
@@ -127,7 +128,7 @@ DISCORD_CLIENT_SECRET
 CODE_PEPPER
 ```
 
-Keep `BOT_CLAIM_LIMIT=1` during the beta so each job is revalidated immediately before execution.
+Keep `BOT_CLAIM_LIMIT=1` during beta so each job is revalidated immediately before execution.
 
 Current worker resilience assumptions:
 
@@ -135,7 +136,8 @@ Current worker resilience assumptions:
 - Discord request timeout: 20 seconds;
 - worker result callback retries: 3;
 - abandoned PROCESSING lock recovery: 2 minutes;
-- five Discord job attempts maximum before FAILED.
+- five Discord job attempts maximum before FAILED;
+- automation scheduler and tracked-role reconciliation run on the scheduler interval.
 
 ## Pre-merge release gate
 
@@ -165,7 +167,7 @@ Re-run release verification from merged `main`, confirm final `1.0.0` metadata, 
 3. Back up production database.
 4. Stop any test Four Seasons worker.
 5. Apply `database/011_v100_discord_bot_beta.sql` exactly once.
-6. Verify current expected table count: 55.
+6. Verify current expected table count: **56**.
 7. Upload/extract verified merged-main website release.
 8. Add/confirm website bot environment values.
 9. Restart Game Night Tools.
@@ -208,18 +210,34 @@ Use a controlled Discord workspace first:
 - configure a test announcement channel and verify delivery;
 - configure a test match category and verify private channel create/cleanup;
 - verify bot itself can post inside the private match channel;
-- configure competitor/champion roles below the bot's highest role and verify add/remove behavior.
+- configure competitor/champion roles below the bot's highest role and verify add/remove behavior;
+- confirm successful ADD creates an ACTIVE `discord_role_assignments` record.
 
 ## Idempotency/recovery smoke
 
 Before broad rollout:
 
 1. Queue a test announcement or DM and interrupt the worker's website callback after Discord accepts the message. Confirm retry does not intentionally create a second message.
-2. Create a test match channel, interrupt the success-report path, and retry. Confirm the worker finds the `gnt-match:<match-id>` channel topic and reuses it.
+2. Create a test match channel, interrupt the success-report path, and retry. Confirm the worker finds the `gnt-match:<match-id>` topic and reuses it.
 3. Confirm another PENDING/PROCESSING CREATE_MATCH_CHANNEL job is not scheduled for the same match.
 4. Stop the worker with one job PROCESSING and confirm stale recovery happens after roughly two minutes.
 5. Queue a reminder, disable the relevant user/server setting, then start the worker. Confirm the queued job becomes CANCELLED rather than delivered.
-6. Retry a FAILED but now-stale job from Bot Settings. Confirm delivery-time validation cancels it.
+6. Confirm automatic cancellation releases the trigger dedupe key; re-enable the feature while the trigger is still valid and confirm fresh work can be queued.
+7. Confirm manual **Cancel queued** retains its dedupe key and does not immediately recreate the manually cancelled trigger.
+8. Retry a FAILED but now-stale job from Bot Settings. Confirm delivery-time validation cancels it.
+
+## Exact-role reconciliation smoke
+
+1. Assign competitor role A to a controlled participant and confirm an ACTIVE tracked assignment for A.
+2. Change the workspace Competitor Role ID to B while the participant is still in an active event.
+3. Confirm a distinct B ADD can queue and A cleanup can queue simultaneously because jobs persist exact role IDs.
+4. Confirm Four Seasons adds B and removes historical A.
+5. Confirm A's tracked assignment becomes REMOVED.
+6. Change back to A later and confirm released completed-role dedupe does not permanently block reuse.
+7. Disable role sync while a tracked role is ACTIVE and confirm reconciliation can still queue/remove that exact historical role.
+8. Complete one event while the participant remains active in another event and confirm competitor role is retained.
+9. End the final active competition and confirm tracked competitor role is removed.
+10. Reopen/correct a completed bracket so a tracked champion is no longer champion and confirm champion-role cleanup is queued.
 
 ## Safe failure checks
 
@@ -246,7 +264,8 @@ If the whole website must roll back after migration 011:
 If only the bot beta needs to be disabled:
 
 - disable workspace bot feature toggles;
-- stop Four Seasons;
+- let role/channel reconciliation clean bot-managed Discord state while the bot is still installed;
+- then stop Four Seasons;
 - optionally remove the bot from Discord workspaces;
 - leave event/tournament data untouched.
 
