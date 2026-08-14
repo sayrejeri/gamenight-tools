@@ -146,8 +146,11 @@ export async function GET(request: NextRequest) {
       for (const connectionItem of enrichedConnections) {
         const [existing] = await connection.query<RowDataPacket[]>(
           `SELECT id FROM user_connections
-           WHERE user_id = ? AND source = 'DISCORD' AND connection_type = ?
-             AND (external_id IN (?, ?) OR LOWER(handle) = LOWER(?))
+           WHERE user_id = ? AND source = 'DISCORD'
+             AND (
+               (connection_type = ? AND (external_id IN (?, ?) OR LOWER(handle) = LOWER(?)))
+               OR (connection_type = LEFT(CONCAT('REMOVED:', ?), 50) AND external_id IN (?, ?))
+             )
            LIMIT 1`,
           [
             currentUser.id,
@@ -155,6 +158,9 @@ export async function GET(request: NextRequest) {
             connectionItem.externalId,
             connectionItem.originalExternalId,
             connectionItem.handle,
+            connectionItem.type,
+            connectionItem.externalId,
+            connectionItem.originalExternalId,
           ],
         );
 
