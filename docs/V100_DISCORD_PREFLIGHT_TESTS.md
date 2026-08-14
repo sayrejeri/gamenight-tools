@@ -142,6 +142,7 @@ Verify:
 - Artificially delay database work beyond three seconds and confirm deferred/edit-original handling still completes.
 - Player leaderboard uses public competition history only.
 - Team leaderboard uses public team competition history only.
+- Run `/gnt leaderboard type:Teams`, click the returned Game Night Tools link, and confirm the website opens with `mode=teams` / the Teams tab active rather than falling back to Players.
 - Hidden/private event data is not exposed by event/match/bracket commands.
 
 ## Failure isolation
