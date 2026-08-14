@@ -1,0 +1,74 @@
+.profile-badge-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.profile-mini-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(166, 176, 210, 0.28);
+  border-radius: 9px;
+  background: rgba(12, 16, 29, 0.82);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
+  font-size: 15px;
+  line-height: 1;
+  cursor: help;
+}
+
+.profile-mini-badge:hover,
+.profile-mini-badge:focus-visible {
+  border-color: rgba(168, 136, 255, 0.72);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.profile-mini-badge-tooltip {
+  position: absolute;
+  z-index: 40;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  width: max-content;
+  max-width: 260px;
+  padding: 9px 11px;
+  border: 1px solid rgba(166, 176, 210, 0.25);
+  border-radius: 10px;
+  background: #0b0f1c;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  color: #f4f6ff;
+  text-align: left;
+  transform: translate(-50%, 4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.profile-mini-badge-tooltip strong,
+.profile-mini-badge-tooltip small {
+  display: block;
+}
+
+.profile-mini-badge-tooltip small {
+  margin-top: 3px;
+  color: #b8c0da;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.profile-mini-badge:hover .profile-mini-badge-tooltip,
+.profile-mini-badge:focus-visible .profile-mini-badge-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 640px) {
+  .profile-mini-badge-tooltip {
+    display: none;
+  }
+}
