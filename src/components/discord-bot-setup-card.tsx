@@ -38,6 +38,7 @@ export function DiscordBotSetupCard({ workspaceId, configured, connected, instal
         {configured && installUrl ? <a className="button" href={installUrl} target="_blank" rel="noreferrer">{connected ? "Re-authorize bot" : "Install Discord bot"}</a> : null}
         {configured ? <button className="button button-secondary" type="button" onClick={checkConnection} disabled={busy}>{busy ? "Checking…" : "Check connection"}</button> : null}
         {showSettingsLink ? <Link className="button button-secondary" href={`/dashboard/workspaces/${workspaceId}/bot`}>Bot settings</Link> : null}
+        <Link className="button button-secondary" href="/help/discord-bot">Setup walkthrough</Link>
       </div>
       {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
     </section>
