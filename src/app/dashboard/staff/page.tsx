@@ -37,6 +37,7 @@ export default async function StaffDashboardPage() {
   const canModerate = access.permissions.includes("MODERATE_USERS") || access.permissions.includes("VIEW_REPORTS");
   const canManageStaff = access.permissions.includes("MANAGE_PLATFORM_STAFF");
   const canViewAudit = access.permissions.includes("VIEW_BASIC_AUDIT") || access.permissions.includes("VIEW_FULL_AUDIT");
+  const canManageTeams = access.role === "OWNER" || access.role === "ADMIN";
 
   const [requestResult, reportResult, staffResult, auditResult, countResult, recentUserResult] = await Promise.all([
     canReviewProfiles ? safeStaffQuery("profile requests", query<RequestRow[]>(
@@ -103,7 +104,7 @@ export default async function StaffDashboardPage() {
           <h1>Staff dashboard</h1>
           <p>Platform titles and permissions are separate. Your current access determines exactly which sections and actions are available.</p>
         </div>
-        <div className="button-row"><Link className="button button-secondary" href="/dashboard/access">Access Center</Link>{canViewAudit ? <Link className="button button-secondary" href="/dashboard/audit">Audit log</Link> : null}<Link className="button button-secondary" href="/dashboard/staff/users">Website users</Link>{access.permissions.includes("MANAGE_SERVERS") ? <Link className="button button-secondary" href="/dashboard/staff/servers">Server profiles</Link> : null}</div>
+        <div className="button-row"><Link className="button button-secondary" href="/dashboard/access">Access Center</Link>{canViewAudit ? <Link className="button button-secondary" href="/dashboard/audit">Audit log</Link> : null}<Link className="button button-secondary" href="/dashboard/staff/users">Website users</Link>{access.permissions.includes("MANAGE_SERVERS") ? <Link className="button button-secondary" href="/dashboard/staff/servers">Server profiles</Link> : null}{canManageTeams ? <Link className="button button-secondary" href="/dashboard/staff/teams">Team profiles</Link> : null}</div>
       </section>
       {failedSections.length ? <p className="staff-query-warning">The dashboard loaded, but these sections could not be read: {failedSections.join(", ")}. The working sections are still available.</p> : null}
       <div className="staff-stat-grid"><article className="stat-card"><strong>{userCount}</strong><span>Website users</span></article><article className="stat-card"><strong>{requests.length}</strong><span>Profile requests</span></article><article className="stat-card"><strong>{reports.length}</strong><span>Open reports</span></article><article className="stat-card"><strong>{staff.length}</strong><span>Managed staff</span></article><article className="stat-card"><strong>{audit.length}</strong><span>Recent actions</span></article></div>
