@@ -72,6 +72,25 @@ export async function registerDiscordGuildCommands(guildId: string): Promise<voi
       options: [
         { type: 1, name: "status", description: "Show this server's Game Night Tools connection status" },
         { type: 1, name: "events", description: "Show upcoming Game Night Tools events for this server" },
+        { type: 1, name: "matches", description: "Show upcoming or live tournament matches for this server" },
+        { type: 1, name: "bracket", description: "Show the current competition/bracket link for this server" },
+        {
+          type: 1,
+          name: "leaderboard",
+          description: "Show the top competitive players or teams for this server",
+          options: [
+            {
+              type: 3,
+              name: "type",
+              description: "Choose player or team rankings",
+              required: false,
+              choices: [
+                { name: "Players", value: "players" },
+                { name: "Teams", value: "teams" },
+              ],
+            },
+          ],
+        },
       ],
     },
   ];
