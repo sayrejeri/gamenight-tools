@@ -25,7 +25,7 @@ export default async function ProfileRequestsPage() {
 
   return (
     <div className="section-stack">
-      <section className="page-heading"><div><span className="eyebrow">Organizations</span><h1>Server and team profiles</h1><p>Request a verified profile for a Discord community or competitive team. Platform staff reviews every request before it becomes public.</p></div></section>
+      <section className="page-heading"><div><span className="eyebrow">Organizations</span><h1>Server and team profiles</h1><p>Request a profile for a Discord community or competitive team. Team profiles use platform review, while server profiles follow the platform's current server-approval policy.</p></div></section>
       <ProfileRequestForm guilds={guilds.map((guild) => ({ id: guild.guild_id, name: guild.guild_name, isOwner: Boolean(guild.is_owner) }))} workspaces={workspaces} />
       <section className="panel section-stack"><div className="section-header"><div><h2>Your requests</h2><p>Staff decisions and requested changes appear here.</p></div></div>{requests.length ? <div className="request-list">{requests.map((item) => <article className="list-card request-card" key={item.id}><span className="list-icon">{item.request_type.slice(0, 1)}</span><div><strong>{item.requested_name}</strong><span>{item.request_type.toLowerCase()} profile · {item.status.toLowerCase().replaceAll("_", " ")}</span>{item.review_reason ? <p>{item.review_reason}</p> : null}</div><span className="badge">{new Date(item.created_at).toLocaleDateString()}</span></article>)}</div> : <div className="empty-state">You have not submitted a profile request yet.</div>}</section>
     </div>

@@ -27,5 +27,5 @@ export default async function NotificationsPage() {
      ORDER BY n.created_at DESC LIMIT 200`,
     [session.userId],
   );
-  return <div className="section-stack"><section className="page-heading"><div><span className="eyebrow">Updates and invitations</span><h1>Notifications</h1><p>Profile decisions, team applications, event reminders, waitlist promotions, staff updates, and future chat mentions appear here.</p></div></section><NotificationsList notifications={notifications.map((row) => { const item = formatNotification(row); return { id: item.id, title: item.title, message: item.message, category: item.category, action_url: item.action_url, is_read: item.is_read, created_at: new Date(item.created_at).toISOString() }; })} /></div>;
+  return <div className="section-stack"><section className="page-heading"><div><span className="eyebrow">Updates and invitations</span><h1>Notifications</h1><p>Profile decisions, team applications, event reminders, waitlist promotions, staff updates, chat mentions, and replies appear here.</p></div></section><NotificationsList notifications={notifications.map((row) => { const item = formatNotification(row); return { id: item.id, title: item.title, message: item.message, category: item.category, action_url: item.action_url, is_read: item.is_read, created_at: new Date(item.created_at).toISOString() }; })} /></div>;
 }

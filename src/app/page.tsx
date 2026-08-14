@@ -24,7 +24,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           <span className="eyebrow">Events · Teams · Communities</span>
           <h1>Everything your game-night community needs, without requiring a Discord bot.</h1>
           <p>
-            Create approved server and team profiles, publish events, collect signups, manage participants,
+            Create server and team profiles, publish events, collect signups, manage participants,
             build brackets, connect Discord webhooks, share suggestions, and keep every action tied to a Discord-authenticated user.
           </p>
           <div className="button-row">
@@ -39,14 +39,14 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           <div className="status-line"><span>Discord bot</span><strong>Not required</strong></div>
           <div className="status-line"><span>Discord webhooks</span><strong>Supported</strong></div>
           <div className="status-line"><span>User profiles</span><strong>Discord connected</strong></div>
-          <div className="status-line"><span>Server and team profiles</span><strong>Staff approved</strong></div>
+          <div className="status-line"><span>Server and team profiles</span><strong>Approval workflows</strong></div>
           <div className="status-line"><span>Event times</span><strong>Viewer local</strong></div>
         </div>
       </section>
 
       <section id="foundation" className="feature-grid">
         <article className="card"><span className="card-kicker">Events</span><h2>From draft to final result</h2><p>Publish signups, manage waitlists and check-in, require game identities, prepare brackets, and display times correctly for every viewer.</p></article>
-        <article className="card"><span className="card-kicker">Community profiles</span><h2>Give every server a real home</h2><p>Approved server profiles support full-card banners, logos, Discord invites, Roblox communities, saved games, staff roles, and events.</p></article>
+        <article className="card"><span className="card-kicker">Community profiles</span><h2>Give every server a real home</h2><p>Server profiles support full-card banners, logos, Discord invites, Roblox communities, saved games, staff roles, and events.</p></article>
         <article className="card"><span className="card-kicker">Teams</span><h2>Build competitive rosters</h2><p>Team profiles include owners, managers, captains, players, substitutes, recruiting settings, applications, and linked player profiles.</p></article>
         <article className="card"><span className="card-kicker">Discord integration</span><h2>Post updates without installing a bot</h2><p>Owners can connect encrypted Discord webhooks for event, bracket, check-in, and result announcements. A bot remains optional for future advanced features.</p></article>
         <article className="card"><span className="card-kicker">Suggestions</span><h2>Let the community shape updates</h2><p>Members can submit ideas, upvote or downvote, comment, and follow each suggestion from review to planned, development, and release.</p></article>
