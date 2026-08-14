@@ -66,15 +66,6 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
   }
   const { channel } = channelContext;
 
-  const counts = await query<(RowDataPacket & { active_count: number })[]>(
-    `SELECT COUNT(*) AS active_count FROM community_channels
-     WHERE scope_type = ? AND scope_id = ? AND is_archived = 0`,
-    [channel.scope_type, channel.scope_id],
-  );
-  if (Number(counts[0]?.active_count ?? 0) <= 1) {
-    return NextResponse.json({ error: "A community must keep at least one active channel." }, { status: 409 });
-  }
-
   await getPool().execute(
     `UPDATE community_channels SET is_archived = 1, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
     [channelId],
