@@ -86,8 +86,12 @@ export async function POST(request: Request) {
     allUserIds,
   );
   const discordByUser = new Map(discordUsers.map((user) => [user.user_id, user.discord_id]));
-  const participantDiscordIds = [...new Set([...participantUserIds].map((userId) => discordByUser.get(userId)).filter((value): value is string => Boolean(value) && /^\d{15,25}$/.test(value)))];
-  const staffDiscordIds = [...new Set([...staffUserIds].map((userId) => discordByUser.get(userId)).filter((value): value is string => Boolean(value) && /^\d{15,25}$/.test(value)))];
+  const participantDiscordIds = [...new Set([...participantUserIds]
+    .map((userId) => discordByUser.get(userId))
+    .filter((value): value is string => typeof value === "string" && /^\d{15,25}$/.test(value)))];
+  const staffDiscordIds = [...new Set([...staffUserIds]
+    .map((userId) => discordByUser.get(userId))
+    .filter((value): value is string => typeof value === "string" && /^\d{15,25}$/.test(value)))];
 
   return NextResponse.json({
     success: true,
