@@ -5,10 +5,12 @@ import { getDiscordAvatarUrl, readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connections";
 import { getEventViewerAccess } from "@/lib/event-view-access";
+import { getPlatformRole } from "@/lib/platform-access";
 import { PlatformIcon } from "@/components/platform-icon";
 import { LocalDateTime } from "@/components/local-date-time";
 import { BrandMark } from "@/components/brand-mark";
 import { ProfileSafetyActions } from "@/components/profile-safety-actions";
+import { ProfileBadgeStrip, type ProfileBadgeItem } from "@/components/profile-badge-strip";
 
 type UserRow = RowDataPacket & {
   id: string;
@@ -67,7 +69,7 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
     viewerHasBlocked = blocked.some((item) => item.blocker_user_id === viewer.userId);
   }
 
-  const [connections, teams, workspaces, eventCandidates] = await Promise.all([
+  const [connections, teams, workspaces, eventCandidates, platformRole] = await Promise.all([
     user.show_game_identities || isOwner ? query<ConnectionRow[]>(
       `SELECT connection_type, external_id, handle, display_name, profile_url, avatar_url, is_verified
        FROM user_connections
@@ -99,6 +101,7 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
        ORDER BY COALESCE(e.starts_at, e.created_at) DESC LIMIT 24`,
       [user.id],
     ) : Promise.resolve([] as EventRow[]),
+    getPlatformRole(user.id),
   ]);
 
   const events: EventRow[] = [];
@@ -112,6 +115,19 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
     if (events.length >= 12) break;
   }
 
+  const profileBadges: ProfileBadgeItem[] = [];
+  const roleBadge: Record<string, ProfileBadgeItem> = {
+    OWNER: { key: "platform-owner", label: "Game Night Tools Owner", description: "Platform owner account.", icon: "★" },
+    ADMIN: { key: "platform-admin", label: "Game Night Tools Admin", description: "Platform administrator account.", icon: "◆" },
+    REVIEWER: { key: "platform-reviewer", label: "Profile Reviewer", description: "Helps review Game Night Tools profile requests.", icon: "✓" },
+    MODERATOR: { key: "platform-moderator", label: "Platform Moderator", description: "Helps moderate Game Night Tools.", icon: "⚖" },
+    SUPPORT: { key: "platform-support", label: "Platform Support", description: "Helps users with Game Night Tools support.", icon: "?" },
+  };
+  if (platformRole && roleBadge[platformRole]) profileBadges.push(roleBadge[platformRole]);
+  if (connections.some((connection) => Boolean(connection.is_verified))) profileBadges.push({ key: "verified-identity", label: "Verified game identity", description: "At least one displayed game identity has been resolved or verified by Game Night Tools.", icon: "✔" });
+  if (teams.some((team) => team.role === "OWNER")) profileBadges.push({ key: "team-owner", label: "Team Owner", description: "Owns an approved competitive team shown on this profile.", icon: "T" });
+  if (workspaces.some((workspace) => workspace.role === "OWNER")) profileBadges.push({ key: "server-owner", label: "Server Owner", description: "Owns an approved server profile shown on this account.", icon: "S" });
+
   const avatarUrl = getDiscordAvatarUrl(user.discord_id, user.avatar_hash);
   return (
     <main className="public-shell section-stack">
@@ -119,7 +135,7 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
       <section className="profile-hero" style={user.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(9,11,18,.94), rgba(9,11,18,.55)), url(${user.banner_url})` } : undefined}>
         <div className="profile-hero-user">
           {avatarUrl ? <img className="profile-avatar" src={avatarUrl} alt="" /> : <span className="profile-avatar avatar-fallback">{(user.global_name ?? user.username).slice(0, 1).toUpperCase()}</span>}
-          <div><span className="eyebrow">@{user.site_username}</span><h1>{user.global_name ?? user.username}</h1><p>{user.bio ?? "This player has not added a bio yet."}</p><div className="button-row">{user.main_platform ? <span className="badge">Main platform: {user.main_platform}</span> : null}<span className="badge">Member since {new Date(user.created_at).getFullYear()}</span>{viewerHasBlocked ? <span className="badge">Blocked by you</span> : null}</div></div>
+          <div><span className="eyebrow">@{user.site_username}</span><h1>{user.global_name ?? user.username}</h1><ProfileBadgeStrip badges={profileBadges} /><p>{user.bio ?? "This player has not added a bio yet."}</p><div className="button-row">{user.main_platform ? <span className="badge">Main platform: {user.main_platform}</span> : null}<span className="badge">Member since {new Date(user.created_at).getFullYear()}</span>{viewerHasBlocked ? <span className="badge">Blocked by you</span> : null}</div></div>
         </div>
         <div className="button-row">{isOwner ? <Link className="button" href="/dashboard/settings">Edit profile</Link> : null}{viewer && !isOwner ? <ProfileSafetyActions userId={user.id} blocked={viewerHasBlocked} /> : null}</div>
       </section>
