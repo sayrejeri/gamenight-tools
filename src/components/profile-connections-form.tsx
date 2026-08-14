@@ -28,19 +28,25 @@ export function ProfileConnectionsForm({ connections, returnTo }: { connections:
     setBusyId(connection.id);
     setMessage("");
     try {
+      const payload = connection.source === "DISCORD"
+        ? {
+            id: connection.id,
+            visible: formData.get("visible") === "on",
+          }
+        : {
+            id: connection.id,
+            handle: formData.get("handle"),
+            displayName: formData.get("displayName") || null,
+            visible: formData.get("visible") === "on",
+          };
       const response = await fetch("/api/profile/connections", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: connection.id,
-          handle: formData.get("handle"),
-          displayName: formData.get("displayName") || null,
-          visible: formData.get("visible") === "on",
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Connection could not be saved.");
-      setMessage("Connection saved.");
+      setMessage(connection.source === "DISCORD" ? "Identity visibility saved." : "Connection saved.");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Connection could not be saved.");
@@ -56,6 +62,7 @@ export function ProfileConnectionsForm({ connections, returnTo }: { connections:
       const response = await fetch(`/api/profile/connections?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Connection could not be removed.");
+      setMessage("Identity removed from Game Night Tools.");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Connection could not be removed.");
@@ -94,7 +101,7 @@ export function ProfileConnectionsForm({ connections, returnTo }: { connections:
       <section className="card connection-refresh-card">
         <div>
           <h3>Refresh Discord connections</h3>
-          <p className="muted">Re-authorize Discord to refresh your Discord profile, server memberships, and game/service connections. This does not remove your manual identities.</p>
+          <p className="muted">Re-authorize Discord to refresh your Discord profile, server memberships, and game/service connections. Imported identity names stay synced to Discord; your visibility choices are preserved.</p>
         </div>
         <a className="button button-secondary" href={`/api/auth/discord/login?returnTo=${encodeURIComponent(refreshReturnTo)}`}>Refresh from Discord</a>
       </section>
@@ -103,13 +110,14 @@ export function ProfileConnectionsForm({ connections, returnTo }: { connections:
       {connections.map((connection) => {
         const profileUrl = buildConnectionProfileUrl(connection.connection_type, connection.external_id, connection.handle, connection.profile_url);
         const icon = <PlatformIcon type={connection.connection_type} avatarUrl={connection.avatar_url} size="large" />;
+        const imported = connection.source === "DISCORD";
         return (
           <form className="connection-row" key={connection.id} action={(formData) => save(connection, formData)}>
             <div className="identity-heading">
               {profileUrl ? <a href={profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${formatConnectionType(connection.connection_type)} profile`}>{icon}</a> : icon}
               <div>
                 <strong>{formatConnectionType(connection.connection_type)}</strong>
-                <span className="badge">{connection.source === "DISCORD" ? "Imported from Discord" : "Manual"}</span>
+                <span className="badge">{imported ? "Imported from Discord" : "Manual"}</span>
                 {connection.is_verified ? <span className="badge">Resolved</span> : null}
                 {profileUrl ? <div><a className="text-link" href={profileUrl} target="_blank" rel="noreferrer">Open linked profile</a></div> : null}
               </div>
@@ -118,17 +126,18 @@ export function ProfileConnectionsForm({ connections, returnTo }: { connections:
             <div className="two-column">
               <div className="form-stack compact">
                 <label htmlFor={`handle-${connection.id}`}>Username or handle</label>
-                <input id={`handle-${connection.id}`} name="handle" defaultValue={connection.handle} required />
+                <input id={`handle-${connection.id}`} name="handle" defaultValue={connection.handle} required={!imported} readOnly={imported} aria-readonly={imported} />
               </div>
               <div className="form-stack compact">
                 <label htmlFor={`display-${connection.id}`}>Preferred display name</label>
-                <input id={`display-${connection.id}`} name="displayName" defaultValue={connection.display_name ?? ""} />
+                <input id={`display-${connection.id}`} name="displayName" defaultValue={connection.display_name ?? ""} readOnly={imported} aria-readonly={imported} />
               </div>
             </div>
 
+            {imported ? <p className="muted">Imported identity details are controlled by Discord. You can change whether this identity is visible here or remove it from Game Night Tools.</p> : null}
             <label className="checkbox-row"><input name="visible" type="checkbox" defaultChecked={Boolean(connection.is_visible)} />Visible on your profile and to event hosts when needed</label>
             <div className="button-row">
-              <button className="button" type="submit" disabled={busyId === connection.id}>Save</button>
+              <button className="button" type="submit" disabled={busyId === connection.id}>{imported ? "Save visibility" : "Save"}</button>
               <button className="button button-danger" type="button" disabled={busyId === connection.id} onClick={() => remove(connection.id)}>Remove</button>
             </div>
           </form>
