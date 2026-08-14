@@ -67,6 +67,19 @@
   transform: translate(-50%, 0);
 }
 
+/* Bot delivery errors, Discord permission explanations, and validation details can
+   contain long IDs/URLs. Keep generic list-card layouts from forcing horizontal
+   overflow on narrow screens. */
+.panel .compact-list .list-card > div {
+  min-width: 0;
+}
+
+.panel .compact-list .list-card > div span,
+.panel .compact-list .list-card > div small {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 640px) {
   .profile-badge-strip {
     gap: 7px;
