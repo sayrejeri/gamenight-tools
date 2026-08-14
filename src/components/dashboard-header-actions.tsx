@@ -7,7 +7,8 @@ import { SignOutButton } from "@/components/sign-out-button";
 
 const primaryLinks = [
   ["Home", "/dashboard"], ["Events", "/dashboard/events"], ["Servers", "/dashboard/servers"],
-  ["Teams", "/dashboard/teams"], ["Suggestions", "/dashboard/suggestions"], ["Tools", "/dashboard/tools"], ["Search", "/dashboard/search"],
+  ["Teams", "/dashboard/teams"], ["Leaderboards", "/dashboard/leaderboards"], ["Community", "/dashboard/community"],
+  ["Suggestions", "/dashboard/suggestions"], ["Tools", "/dashboard/tools"], ["Search", "/dashboard/search"],
 ] as const;
 
 type OpenMenu = "profile" | "navigation" | null;
@@ -72,7 +73,7 @@ export function DashboardHeaderActions({ avatarUrl, displayName, siteUsername, f
       <details className="mobile-navigation" open={openMenu === "navigation"}>
         <summary aria-label="Open navigation menu" aria-expanded={openMenu === "navigation"} onClick={(event) => { event.preventDefault(); toggle("navigation"); }}><span className="hamburger-lines" aria-hidden="true"><i /><i /><i /></span></summary>
         {openMenu === "navigation" ? <button className="mobile-menu-backdrop" type="button" aria-label="Close navigation menu" onClick={closeMenus} /> : null}
-        <div className="mobile-navigation-panel"><div className="mobile-navigation-heading"><strong>Navigate</strong><small>Game Night Tools</small></div><nav aria-label="Mobile dashboard navigation">{primaryLinks.map(([label, href]) => <Link href={href} key={href} onClick={closeMenus}>{label}<span aria-hidden="true">›</span></Link>)}</nav></div>
+        <div className="mobile-navigation-panel"><div className="mobile-navigation-heading"><strong>Navigate</strong><small>Game Night Tools</small></div><nav aria-label="Mobile dashboard navigation">{primaryLinks.map(([label, href]) => <Link href={href} key={href} onClick={closeMenus} aria-current={pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`)) ? "page" : undefined}>{label}<span aria-hidden="true">›</span></Link>)}</nav></div>
       </details>
     </div>
   );
