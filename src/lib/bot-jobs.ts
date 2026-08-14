@@ -48,7 +48,6 @@ function workspaceToggleForJob(type: BotJobType): keyof WorkspaceBotGateRow | nu
   if (type.startsWith("DM_")) return "dm_reminders_enabled";
   if (type.startsWith("ANNOUNCE_")) return "announcements_enabled";
   if (type === "CREATE_MATCH_CHANNEL") return "temporary_match_channels_enabled";
-  // Cleanup must remain possible after a manager disables new temporary channels.
   if (type === "DELETE_MATCH_CHANNEL" || type === "SYNC_ROLE") return null;
   return null;
 }
@@ -112,11 +111,8 @@ export async function enqueueDiscordBotJob(input: {
       const configuredRoleId = resolvedRoleKind === "CHAMPION" ? workspace.champion_role_id : workspace.competitor_role_id;
       if (action === "ADD") {
         if (!workspace.role_sync_enabled || !configuredRoleId) return false;
-        // ADD jobs are always bound to the role currently configured at queue time.
         resolvedRoleId = configuredRoleId;
       } else if (!resolvedRoleId) {
-        // Normal removal may use the current role. Assignment-cleanup removals pass
-        // the exact historical role ID explicitly and remain possible after config changes.
         if (!workspace.role_sync_enabled || !configuredRoleId) return false;
         resolvedRoleId = configuredRoleId;
       }
@@ -137,6 +133,12 @@ export async function enqueueDiscordBotJob(input: {
     if (toggle && !preferences[toggle]) return false;
   }
 
+  let dedupeKey = input.dedupeKey?.slice(0, 191) ?? null;
+  if (dedupeKey && input.type === "SYNC_ROLE" && resolvedRoleKind && resolvedRoleId) {
+    const suffix = `:${resolvedRoleKind}:${resolvedRoleId}`;
+    dedupeKey = `${dedupeKey.slice(0, Math.max(0, 191 - suffix.length))}${suffix}`;
+  }
+
   const [result] = await target.execute(
     `INSERT IGNORE INTO discord_bot_jobs
       (id, workspace_id, user_id, event_id, match_id, role_kind, discord_role_id, job_type, dedupe_key, payload_json, scheduled_at)
@@ -150,7 +152,7 @@ export async function enqueueDiscordBotJob(input: {
       input.type === "SYNC_ROLE" ? resolvedRoleKind : null,
       input.type === "SYNC_ROLE" ? resolvedRoleId : null,
       input.type,
-      input.dedupeKey?.slice(0, 191) ?? null,
+      dedupeKey,
       input.payload === undefined ? null : JSON.stringify(input.payload),
       input.scheduledAt ?? new Date(),
     ],
