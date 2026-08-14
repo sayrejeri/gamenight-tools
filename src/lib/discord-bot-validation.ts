@@ -123,14 +123,20 @@ function effectiveChannelPermissions(input: {
   return permissions;
 }
 
-function roleCheck(label: string, roleId: string, required: boolean, roles: DiscordRole[], botHighestPosition: number, canManageRoles: boolean): DiscordBotValidationCheck {
+function roleCheck(label: string, guildId: string, roleId: string, syncEnabled: boolean, roles: DiscordRole[], botHighestPosition: number, canManageRoles: boolean): DiscordBotValidationCheck {
   if (!roleId) {
-    return { key: label.toLowerCase().replaceAll(" ", "-"), label, status: required ? "FAIL" : "SKIP", detail: required ? "This role is required while role sync is enabled." : "No role configured." };
+    return {
+      key: label.toLowerCase().replaceAll(" ", "-"),
+      label,
+      status: syncEnabled ? "WARN" : "SKIP",
+      detail: syncEnabled ? `No ${label.toLowerCase()} is configured. That part of role sync will stay inactive.` : "No role configured.",
+    };
   }
+  if (roleId === guildId) return { key: roleId, label, status: "FAIL", detail: "@everyone cannot be used as a synchronized competition role." };
   const role = roles.find((item) => item.id === roleId);
   if (!role) return { key: roleId, label, status: "FAIL", detail: "Discord could not find this role in the connected server." };
   if (role.managed) return { key: roleId, label, status: "FAIL", detail: `${role.name} is managed by Discord/an integration and cannot be assigned normally.` };
-  if (!canManageRoles) return { key: roleId, label, status: "FAIL", detail: `The bot does not currently have Manage Roles in this server.` };
+  if (!canManageRoles) return { key: roleId, label, status: "FAIL", detail: "The bot does not currently have Manage Roles in this server." };
   if (role.position >= botHighestPosition) return { key: roleId, label, status: "FAIL", detail: `${role.name} is not below the bot's highest role. Move the bot role above it.` };
   return { key: roleId, label, status: "PASS", detail: `${role.name} exists and is below the bot's highest role.` };
 }
@@ -175,12 +181,13 @@ export async function validateDiscordBotWorkspaceTargets(input: DiscordBotValida
       checks.push({ key: "announcement-channel", label: "Announcement channel", status: "FAIL", detail: "Choose a normal text channel or announcement channel." });
     } else {
       const permissions = effectiveChannelPermissions({ guildId: input.guildId, botUserId: userResult.value.id, roles, memberRoleIds, channel: channelResult.value });
-      const missing = [
+      const requiredPermissions: Array<[string, bigint]> = [
         ["View Channel", PERMISSIONS.VIEW_CHANNEL],
         ["Send Messages", PERMISSIONS.SEND_MESSAGES],
         ["Embed Links", PERMISSIONS.EMBED_LINKS],
         ["Read Message History", PERMISSIONS.READ_MESSAGE_HISTORY],
-      ].filter(([, permission]) => !hasPermission(permissions, permission as bigint)).map(([name]) => name);
+      ];
+      const missing = requiredPermissions.filter(([, permission]) => !hasPermission(permissions, permission)).map(([name]) => name);
       checks.push({
         key: "announcement-channel",
         label: "Announcement channel",
@@ -209,8 +216,8 @@ export async function validateDiscordBotWorkspaceTargets(input: DiscordBotValida
 
   const validateRoles = input.roleSyncEnabled || Boolean(input.competitorRoleId || input.championRoleId);
   if (validateRoles) {
-    checks.push(roleCheck("Competitor role", input.competitorRoleId, input.roleSyncEnabled, roles, botHighestPosition, canManageRoles));
-    checks.push(roleCheck("Champion role", input.championRoleId, input.roleSyncEnabled, roles, botHighestPosition, canManageRoles));
+    checks.push(roleCheck("Competitor role", input.guildId, input.competitorRoleId, input.roleSyncEnabled, roles, botHighestPosition, canManageRoles));
+    checks.push(roleCheck("Champion role", input.guildId, input.championRoleId, input.roleSyncEnabled, roles, botHighestPosition, canManageRoles));
   } else {
     checks.push({ key: "role-sync", label: "Synced roles", status: "SKIP", detail: "Role sync is disabled and no roles are configured." });
   }
