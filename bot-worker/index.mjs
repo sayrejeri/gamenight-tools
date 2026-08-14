@@ -6,6 +6,8 @@ const WORKER_VERSION = (process.env.BOT_WORKER_VERSION || "1.0.0-beta.1").slice(
 const POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.BOT_POLL_SECONDS || 10) * 1000));
 const SCHEDULE_MS = Math.max(30000, Math.min(300000, Number(process.env.BOT_SCHEDULE_SECONDS || 60) * 1000));
 const CLAIM_LIMIT = Math.max(1, Math.min(10, Number(process.env.BOT_CLAIM_LIMIT || 1)));
+const WEBSITE_TIMEOUT_MS = 15000;
+const DISCORD_TIMEOUT_MS = 20000;
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
 if (!APP_URL || !WORKER_SECRET || !DISCORD_BOT_TOKEN) {
@@ -29,6 +31,7 @@ async function websiteRequest(path, body) {
       "x-gnt-bot-worker-secret": WORKER_SECRET,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(WEBSITE_TIMEOUT_MS),
   });
   const text = await response.text();
   let parsed = {};
@@ -41,6 +44,7 @@ async function websiteRequest(path, body) {
 async function discordRequest(path, options = {}, retried = false) {
   const response = await fetch(`${DISCORD_API_BASE}${path}`, {
     ...options,
+    signal: options.signal ?? AbortSignal.timeout(DISCORD_TIMEOUT_MS),
     headers: {
       Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
       "Content-Type": "application/json",
