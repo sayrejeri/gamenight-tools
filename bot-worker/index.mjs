@@ -174,7 +174,6 @@ async function deleteMatchChannel(job) {
   try {
     await discordRequest(`/channels/${channelId}`, { method: "DELETE" });
   } catch (error) {
-    // Already-deleted Discord channels are a successful cleanup state.
     if (Number(error?.status || 0) !== 404) throw error;
   }
   return { channelId, matchId };
@@ -182,9 +181,9 @@ async function deleteMatchChannel(job) {
 
 async function syncRole(job) {
   if (!job.discordGuildId || !job.targetDiscordId) throw new Error("Role-sync job has no Discord guild/member ID.");
-  const roleKind = job.payload?.roleKind === "CHAMPION" ? "CHAMPION" : "COMPETITOR";
-  const roleId = roleKind === "CHAMPION" ? job.championRoleId : job.competitorRoleId;
-  if (!roleId) throw new Error(`${roleKind.toLowerCase()} role is not configured.`);
+  const roleKind = job.roleKind === "CHAMPION" ? "CHAMPION" : "COMPETITOR";
+  const roleId = typeof job.discordRoleId === "string" && /^\d{15,25}$/.test(job.discordRoleId) ? job.discordRoleId : "";
+  if (!roleId) throw new Error("Role-sync job has no valid persisted Discord role ID.");
   const action = job.payload?.action === "REMOVE" ? "REMOVE" : "ADD";
   await discordRequest(`/guilds/${job.discordGuildId}/members/${job.targetDiscordId}/roles/${roleId}`, {
     method: action === "REMOVE" ? "DELETE" : "PUT",
@@ -272,8 +271,6 @@ async function runOnce() {
       await reportWithRetry(job.id, true, null, result);
       console.log(`[sent] ${job.jobType} ${job.id}`);
     } catch (reportError) {
-      // The Discord action already succeeded. Do not misclassify it as a delivery
-      // failure; stale-lock recovery can safely retry because actions are idempotent.
       console.error(`[success-report-failed] ${job.jobType} ${job.id}:`, reportError?.message || reportError);
     }
   }
