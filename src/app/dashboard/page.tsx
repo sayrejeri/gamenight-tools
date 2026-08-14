@@ -57,7 +57,9 @@ export default async function DashboardPage() {
       `SELECT w.id, w.name, w.discord_guild_id, w.icon_url, w.banner_url,
               w.main_game_category, w.verification_level, wm.role
        FROM workspace_members wm INNER JOIN workspaces w ON w.id = wm.workspace_id
-       WHERE wm.user_id = ? AND wm.status = 'ACTIVE' AND w.profile_status = 'APPROVED'
+       WHERE wm.user_id = ? AND wm.status = 'ACTIVE'
+         AND (wm.expires_at IS NULL OR wm.expires_at > CURRENT_TIMESTAMP(3))
+         AND w.profile_status = 'APPROVED'
        ORDER BY w.name`,
       [session.userId],
     ),
@@ -67,6 +69,7 @@ export default async function DashboardPage() {
        FROM workspaces w
        INNER JOIN user_guilds ug ON ug.guild_id = w.discord_guild_id AND ug.user_id = ?
        LEFT JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ? AND wm.status = 'ACTIVE'
+         AND (wm.expires_at IS NULL OR wm.expires_at > CURRENT_TIMESTAMP(3))
        WHERE w.profile_status = 'APPROVED'
        ORDER BY w.name`,
       [session.userId, session.userId],
@@ -155,8 +158,8 @@ export default async function DashboardPage() {
 
       <div className="dashboard-grid dashboard-overview-grid">
         <section className="panel section-stack">
-          <div className="section-header"><div><h2>Managed servers</h2><p>Registered server profiles where you have an approved staff or host role.</p></div><span className="badge dashboard-count">{memberships.length}</span></div>
-          {memberships.length ? <div className="dashboard-card-scroll"><div className="organization-grid">{memberships.map((workspace) => <WorkspaceCard workspace={workspace} key={workspace.id} />)}</div></div> : <div className="empty-state">You do not currently manage any registered server profiles.</div>}
+          <div className="section-header"><div><h2>Your server roles</h2><p>Active roles assigned to you on registered server profiles.</p></div><span className="badge dashboard-count">{memberships.length}</span></div>
+          {memberships.length ? <div className="dashboard-card-scroll"><div className="organization-grid">{memberships.map((workspace) => <WorkspaceCard workspace={workspace} key={workspace.id} />)}</div></div> : <div className="empty-state">You do not currently have any active server-profile roles.</div>}
         </section>
         <section className="panel section-stack"><div className="section-header"><div><h2>Enter a code</h2><p>Redeem a code provided by server staff to join an event or receive host access.</p></div></div><RedeemCodeForm /></section>
       </div>
