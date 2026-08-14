@@ -18,6 +18,7 @@ const sections = [
   ["Access Center", "Open Access Center from your account menu to see why you have platform, server, or event access, which permissions are active, whether access is temporary, and when it expires."],
   ["Staff roles and permissions", "A visible title such as Host or Moderator is separate from permissions. Owners can use role presets, customize individual capabilities, suspend access, set expirations, copy permissions, and protect high-risk Admin or Owner actions. Chat permissions separately control channels, messages, staff channels, announcements, and timeouts."],
   ["Discord webhooks", "Server staff with webhook permission can connect multiple Discord webhooks. Each destination can have its own label, sender, avatar, notification types, enabled state, test action, and encrypted webhook URL. Website announcement channels can optionally forward announcements through selected webhooks."],
+  ["Discord bot beta", "Approved server workspaces can optionally install the Game Night Tools Discord bot for slash commands, announcements, private match channels, role sync, and member reminders. Every automation starts opt-in, and member DMs also require each user to opt in from Profile Settings. Use the dedicated Discord bot walkthrough before enabling it on a live server."],
   ["Teams", "Team profiles can manage rosters, recruiting, applications, invitations, affiliations with approved server profiles, a main game, and private team chat when enabled. Roblox profiles can use a game name, Place ID, or game URL where supported."],
   ["Tools", "The Tools hub includes bracket management, random teams, quick matchups, map picking, Discord announcement formatting, timestamps, and countdown utilities."],
   ["Notifications", "Notifications show invitations, role changes, moderation updates, event signup decisions, waitlist promotions, cancellations, chat mentions/replies, and other account-specific information. Read notifications can be deleted individually or cleared together."],
@@ -39,20 +40,21 @@ export default function HelpPage() {
         <a className="card" href="#players"><span className="card-kicker">Players</span><h2>Join and communicate</h2><p>Link your game account, join community chat, sign up, check in, and follow event results.</p></a>
         <a className="card" href="#hosts"><span className="card-kicker">Hosts</span><h2>Run events</h2><p>Create or duplicate events, manage approvals and waitlists, invite co-hosts, and operate brackets.</p></a>
         <a className="card" href="#communities"><span className="card-kicker">Communities</span><h2>Manage servers and teams</h2><p>Build profiles, channels, permissions, webhooks, rosters, audit trails, and moderation workflows.</p></a>
+        <Link className="card" href="/help/discord-bot"><span className="card-kicker">Optional Discord integration</span><h2>Discord bot beta</h2><p>Install and validate the bot, connect Four Seasons, choose opt-in automation, and test Discord targets safely.</p></Link>
       </section>
 
       <section className="panel legal-copy section-stack" id="players">
         <div><span className="eyebrow">Walkthrough</span><h2>Feature guide</h2><p className="muted">You do not need to memorize the site. These steps explain what each major area is for.</p></div>
         {sections.map(([title, description], index) => (
           <article className="help-step" id={index === 7 ? "hosts" : index === 10 ? "communities" : undefined} key={title}>
-            <span className="help-step-number">{index + 1}</span><div><h3>{title}</h3><p>{description}</p></div>
+            <span className="help-step-number">{index + 1}</span><div><h3>{title}</h3><p>{description}</p>{title === "Discord bot beta" ? <Link className="button button-secondary" href="/help/discord-bot">Open Discord bot walkthrough</Link> : null}</div>
           </article>
         ))}
       </section>
 
       <section className="panel section-stack">
         <h2>Good places to start</h2>
-        <div className="button-row"><Link className="button" href="/dashboard/community">Community</Link><Link className="button button-secondary" href="/dashboard/profile">Game identities</Link><Link className="button button-secondary" href="/dashboard/events">Events</Link><Link className="button button-secondary" href="/dashboard/servers">Servers</Link><Link className="button button-secondary" href="/dashboard/access">Access Center</Link><Link className="button button-secondary" href="/dashboard/tools">Tools</Link></div>
+        <div className="button-row"><Link className="button" href="/dashboard/community">Community</Link><Link className="button button-secondary" href="/dashboard/profile">Game identities</Link><Link className="button button-secondary" href="/dashboard/events">Events</Link><Link className="button button-secondary" href="/dashboard/servers">Servers</Link><Link className="button button-secondary" href="/dashboard/access">Access Center</Link><Link className="button button-secondary" href="/dashboard/tools">Tools</Link><Link className="button button-secondary" href="/help/discord-bot">Discord bot beta</Link></div>
       </section>
       <PublicFooter />
     </main>
