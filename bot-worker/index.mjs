@@ -129,10 +129,15 @@ async function sendAnnouncement(job) {
 async function createMatchChannel(job) {
   if (!job.discordGuildId || !job.matchCategoryId) throw new Error("Match-channel job is missing its Discord guild or category ID.");
   const matchId = typeof job.matchId === "string" && job.matchId ? job.matchId : typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
-  const participantDiscordIds = Array.isArray(job.payload?.participantDiscordIds)
-    ? [...new Set(job.payload.participantDiscordIds.filter((id) => typeof id === "string" && /^\d{15,25}$/.test(id)))]
+  if (!matchId) throw new Error("Match-channel job has no valid match ID.");
+
+  // Resolve access at execution time so team roster snapshots and accepted event staff
+  // are current when the private Discord channel is actually created.
+  const access = await websiteRequest("/api/internal/bot/matches/access", { matchId });
+  const memberDiscordIds = Array.isArray(access.memberDiscordIds)
+    ? [...new Set(access.memberDiscordIds.filter((id) => typeof id === "string" && /^\d{15,25}$/.test(id)))]
     : [];
-  if (!matchId || !participantDiscordIds.length) throw new Error("Match-channel job has no valid match or Discord participants.");
+  if (!memberDiscordIds.length) throw new Error("Match-channel access resolution returned no eligible Discord members.");
 
   const botUserId = await getBotUserId();
   const marker = `gnt-match:${matchId}`;
@@ -152,7 +157,7 @@ async function createMatchChannel(job) {
       permission_overwrites: [
         { id: job.discordGuildId, type: 0, deny: "1024" },
         { id: botUserId, type: 1, allow: "68624" },
-        ...participantDiscordIds.map((id) => ({ id, type: 1, allow: "68608" })),
+        ...memberDiscordIds.map((id) => ({ id, type: 1, allow: "68608" })),
       ],
     }),
   });
@@ -164,7 +169,13 @@ async function createMatchChannel(job) {
       body: JSON.stringify(normalizeMessagePayload({ content: job.payload.content }, messageNonce(job.id))),
     });
   }
-  return { channelId: channel.id, matchId, reused: false };
+  return {
+    channelId: channel.id,
+    matchId,
+    reused: false,
+    participantCount: Array.isArray(access.participantDiscordIds) ? access.participantDiscordIds.length : 0,
+    staffCount: Array.isArray(access.staffDiscordIds) ? access.staffDiscordIds.length : 0,
+  };
 }
 
 async function deleteMatchChannel(job) {
