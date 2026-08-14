@@ -8,6 +8,11 @@ on:
         required: true
         default: main
         type: string
+      artifact_label:
+        description: Optional artifact label override, e.g. v1.0.0-staging. Leave blank for final VERSION-based names.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +23,7 @@ jobs:
     timeout-minutes: 60
     env:
       TARGET_REF: ${{ inputs.ref }}
+      ARTIFACT_LABEL: ${{ inputs.artifact_label }}
     steps:
       - name: Type-check, build, and package selected ref
         shell: powershell
@@ -44,8 +50,17 @@ jobs:
           if (-not (Test-Path "VERSION")) { throw "VERSION file is missing from $env:TARGET_REF." }
           $version = (Get-Content "VERSION" -Raw).Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION has an unexpected value: $version" }
-          $zipPath = Join-Path $releaseRoot "gamenight-tools-v$version-directadmin.zip"
+
+          $artifactLabel = if ([string]::IsNullOrWhiteSpace($env:ARTIFACT_LABEL)) { "v$version" } else { $env:ARTIFACT_LABEL.Trim() }
+          if ($artifactLabel -notmatch '^[A-Za-z0-9._-]+$') { throw "artifact_label contains unsupported characters." }
+          $zipPath = Join-Path $releaseRoot "gamenight-tools-$artifactLabel-directadmin.zip"
+          $workerZipPath = Join-Path $releaseRoot "gamenight-tools-bot-worker-$artifactLabel.zip"
+
           $deploymentGuide = "DEPLOYMENT-v$version.md"
+          if ($artifactLabel -match '^v?(\d+\.\d+\.\d+)') {
+            $candidateGuide = "DEPLOYMENT-v$($Matches[1]).md"
+            if (Test-Path $candidateGuide) { $deploymentGuide = $candidateGuide }
+          }
 
           Write-Host "Downloading Node.js 22..."
           $versions = Invoke-RestMethod "https://nodejs.org/dist/index.json"
@@ -63,6 +78,19 @@ jobs:
           Write-Host "Installing dependencies..."
           npm install
 
+          Write-Host "Auditing production dependencies..."
+          npm audit --omit=dev --audit-level=high
+
+          if (Test-Path "tests\v100-bot-schema-smoke.cjs") {
+            Write-Host "Checking v1.0 bot migration schema..."
+            node "tests\v100-bot-schema-smoke.cjs"
+          }
+
+          if (Test-Path "bot-worker\index.mjs") {
+            Write-Host "Checking Four Seasons worker syntax..."
+            node --check "bot-worker\index.mjs"
+          }
+
           Write-Host "Running TypeScript check..."
           npm run typecheck
 
@@ -70,6 +98,49 @@ jobs:
           npm run build
 
           if (-not (Test-Path ".next\BUILD_ID")) { throw "Production build finished without .next\BUILD_ID." }
+
+          function New-ReleaseZip {
+            param(
+              [Parameter(Mandatory=$true)][string]$SourceRoot,
+              [Parameter(Mandatory=$true)][string]$Destination,
+              [Parameter(Mandatory=$true)][string[]]$RequiredEntries,
+              [int]$MinimumFiles = 1,
+              [long]$MinimumBytes = 1
+            )
+
+            $files = @(Get-ChildItem -LiteralPath $SourceRoot -File -Recurse -Force)
+            if ($files.Count -lt $MinimumFiles) { throw "Package is unexpectedly small: $($files.Count) files in $SourceRoot." }
+            if (Test-Path $Destination) { Remove-Item $Destination -Force }
+
+            Add-Type -AssemblyName System.IO.Compression
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zipStream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::CreateNew)
+            $archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+            try {
+              foreach ($file in $files) {
+                $relative = $file.FullName.Substring($SourceRoot.Length).TrimStart([char[]]"\/").Replace("\", "/")
+                $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
+                $entryStream = $entry.Open()
+                $sourceStream = $file.OpenRead()
+                try { $sourceStream.CopyTo($entryStream) }
+                finally { $sourceStream.Dispose(); $entryStream.Dispose() }
+              }
+            }
+            finally { $archive.Dispose(); $zipStream.Dispose() }
+
+            $readStream = [System.IO.File]::OpenRead($Destination)
+            $readArchive = New-Object System.IO.Compression.ZipArchive($readStream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+            try { $entries = @($readArchive.Entries | ForEach-Object { $_.FullName }) }
+            finally { $readArchive.Dispose(); $readStream.Dispose() }
+
+            foreach ($required in $RequiredEntries) {
+              if ($entries -notcontains $required) { throw "ZIP verification failed: missing $required in $Destination" }
+            }
+            if (@($entries | Where-Object { $_ -match "\\" }).Count -gt 0) { throw "ZIP contains unsafe Windows backslash paths: $Destination" }
+            $zipSize = (Get-Item $Destination).Length
+            if ($zipSize -lt $MinimumBytes) { throw "ZIP is unexpectedly small: $zipSize bytes in $Destination" }
+            return @{ Entries = $entries; Size = $zipSize }
+          }
 
           Write-Host "Preparing DirectAdmin package..."
           $deploy = Join-Path $work "deploy"
@@ -92,61 +163,32 @@ jobs:
             if (Test-Path $_) { Remove-Item $_ -Recurse -Force }
           }
 
-          $files = @(Get-ChildItem -LiteralPath $deploy -File -Recurse -Force)
-          if ($files.Count -lt 20) { throw "Deployment package is unexpectedly small: $($files.Count) files." }
+          $websiteResult = New-ReleaseZip -SourceRoot $deploy -Destination $zipPath -RequiredEntries @(".next/BUILD_ID", "server.js", "package.json", "VERSION") -MinimumFiles 20 -MinimumBytes 100000
+          if ($artifactLabel -eq "v1.0.0" -and $websiteResult.Entries -notcontains "database/011_v100_discord_bot_beta.sql") {
+            throw "ZIP verification failed: v1.0.0 migration is missing."
+          }
 
-          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-          Add-Type -AssemblyName System.IO.Compression
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-          $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
-          $archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
-          try {
-            foreach ($file in $files) {
-              $relative = $file.FullName.Substring($deploy.Length).TrimStart([char[]]"\/").Replace("\", "/")
-              $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
-              $entryStream = $entry.Open()
-              $sourceStream = $file.OpenRead()
-              try { $sourceStream.CopyTo($entryStream) }
-              finally { $sourceStream.Dispose(); $entryStream.Dispose() }
-            }
+          $workerResult = $null
+          if (Test-Path "bot-worker\index.mjs") {
+            Write-Host "Preparing Four Seasons worker package..."
+            $workerDeploy = Join-Path $work "bot-worker-deploy"
+            if (Test-Path $workerDeploy) { Remove-Item $workerDeploy -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $workerDeploy | Out-Null
+            Copy-Item "bot-worker\index.mjs" $workerDeploy
+            Copy-Item "bot-worker\package.json" $workerDeploy
+            if (Test-Path "bot-worker\.env.example") { Copy-Item "bot-worker\.env.example" $workerDeploy }
+            if (Test-Path "docs\DISCORD_BOT_BETA.md") { Copy-Item "docs\DISCORD_BOT_BETA.md" $workerDeploy }
+            $workerResult = New-ReleaseZip -SourceRoot $workerDeploy -Destination $workerZipPath -RequiredEntries @("index.mjs", "package.json", ".env.example") -MinimumFiles 3 -MinimumBytes 1000
           }
-          finally { $archive.Dispose(); $zipStream.Dispose() }
-
-          $readStream = [System.IO.File]::OpenRead($zipPath)
-          $readArchive = New-Object System.IO.Compression.ZipArchive($readStream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
-          try { $entries = @($readArchive.Entries | ForEach-Object { $_.FullName }) }
-          finally { $readArchive.Dispose(); $readStream.Dispose() }
-
-          foreach ($required in @(".next/BUILD_ID", "server.js", "package.json", "VERSION")) {
-            if ($entries -notcontains $required) { throw "ZIP verification failed: missing $required" }
-          }
-          if ($version -eq "0.3.8" -and $entries -notcontains "database/004_access_control.sql") {
-            throw "ZIP verification failed: v0.3.8 migration is missing."
-          }
-          if ($version -eq "0.4.0" -and $entries -notcontains "database/005_community_communication.sql") {
-            throw "ZIP verification failed: v0.4.0 migration is missing."
-          }
-          if ($version -eq "0.4.1" -and $entries -notcontains "database/006_event_hosting_qol.sql") {
-            throw "ZIP verification failed: v0.4.1 migration is missing."
-          }
-          if ($version -eq "0.6.0" -and $entries -notcontains "database/007_tournament_operations.sql") {
-            throw "ZIP verification failed: v0.6.0 migration is missing."
-          }
-          if ($version -eq "0.7.0" -and $entries -notcontains "database/008_expanded_competition_formats.sql") {
-            throw "ZIP verification failed: v0.7.0 migration is missing."
-          }
-          if ($version -eq "0.8.0" -and $entries -notcontains "database/009_game_night_tools_series.sql") {
-            throw "ZIP verification failed: v0.8.0 migration is missing."
-          }
-          if (@($entries | Where-Object { $_ -match "\\" }).Count -gt 0) { throw "ZIP contains unsafe Windows backslash paths." }
-
-          $zipSize = (Get-Item $zipPath).Length
-          if ($zipSize -lt 100000) { throw "ZIP is unexpectedly small: $zipSize bytes." }
 
           Write-Host ""
           Write-Host "RELEASE VERIFICATION COMPLETE"
           Write-Host "Built ref: $env:TARGET_REF"
-          Write-Host "Version: $version"
-          Write-Host "Verified $($entries.Count) files and .next/BUILD_ID"
+          Write-Host "Source VERSION: $version"
+          Write-Host "Artifact label: $artifactLabel"
+          Write-Host "Verified $($websiteResult.Entries.Count) website files and .next/BUILD_ID"
           Write-Host "DirectAdmin ZIP: $zipPath"
+          if ($workerResult) {
+            Write-Host "Verified $($workerResult.Entries.Count) Four Seasons worker files"
+            Write-Host "Four Seasons ZIP: $workerZipPath"
+          }
