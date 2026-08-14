@@ -12,10 +12,12 @@ Highlights include:
 - mobile navigation feature parity for Leaderboards and Community;
 - current-page mobile navigation state and reduced-motion handling;
 - broader accessibility and narrow-screen wrapping improvements;
+- phone leaderboards rendered as readable stat cards instead of an 860px horizontal desktop table;
 - public profile badge strip with keyboard/mobile-friendly descriptions;
 - earned competitive badges surfaced directly on public profiles when privacy allows;
 - expanded platform staff controls for registered server and team profiles;
-- granular **Manage Server Profiles** and **Manage Team Profiles** access independent of staff title.
+- granular **Manage Server Profiles** and **Manage Team Profiles** access independent of staff title;
+- a discoverable in-app Discord bot beta walkthrough linked from Bot Settings and the main Help page.
 
 ## Public profile badges
 
@@ -93,6 +95,8 @@ A reminder/announcement can be automatically cancelled if, for example:
 - a submitted result no longer awaits confirmation;
 - event visibility/status changed;
 - role/channel eligibility changed.
+
+Notification dedupe keys now include a short deterministic version of the outbound payload for DM and announcement jobs. Repeated scheduler passes with unchanged content still dedupe, while a legitimate changed event time, match time/deadline, result, or corrected winner can create a fresh notification instead of being blocked by an older SENT key.
 
 Discord delivery failures remain isolated from website competition state.
 
@@ -188,6 +192,7 @@ The v1.0 pull-request gate now includes:
 
 ```text
 npm audit --omit=dev --audit-level=high
+node tests/v100-bot-schema-smoke.cjs
 node --check bot-worker/index.mjs
 npm run typecheck
 npm run build
@@ -197,6 +202,19 @@ alongside the existing competition/description smoke tests.
 
 Next.js was upgraded from `16.2.12` to `16.3.1` during v1.0 development to clear the production dependency audit for the affected transitive runtime packages.
 
+## Help and setup guidance
+
+A dedicated `/help/discord-bot` walkthrough explains:
+
+- optional bot installation and connection checks;
+- opt-in feature settings and member DM privacy;
+- Discord target validation;
+- Four Seasons worker health;
+- commands, announcements, match channels, and role sync;
+- failure isolation from tournament state.
+
+The walkthrough is linked directly from Bot Settings and surfaced on the main Help page.
+
 ## Deployment/testing
 
 Use:
@@ -204,6 +222,7 @@ Use:
 ```text
 DEPLOYMENT-v1.0.0.md
 docs/V100_TEST_PLAN.md
+docs/V100_DISCORD_PREFLIGHT_TESTS.md
 docs/DISCORD_BOT_BETA.md
 ```
 
