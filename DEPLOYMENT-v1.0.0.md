@@ -1,6 +1,6 @@
 # Game Night Tools v1.0.0 — Deployment (Draft)
 
-> This runbook is being maintained with draft PR #34. Do not use it for production until the v1.0 PR is marked ready, the final exact head is green, and the release artifact is generated from merged `main`.
+> This runbook is maintained with draft PR #34. Do not use it for production until the PR is ready, the exact final head is green, and the release artifact is generated from merged `main`.
 
 ## Release scope
 
@@ -8,32 +8,31 @@ v1.0.0 is the **Platform Polish & Discord Bot Beta** milestone.
 
 Current scope includes:
 
-- platform staff team-profile administration with granular permissions;
-- Discord-style public profile badges, including earned competitive badges;
+- granular platform staff server/team profile administration;
+- Discord-style public profile and earned competitive badges;
 - optional per-workspace Discord bot installation/settings;
-- opt-in user Discord DM reminder preferences;
-- signed Discord HTTP slash-command endpoint;
-- `/gnt status`, `events`, `matches`, `bracket`, and player/team `leaderboard` commands;
+- opt-in user Discord DM preferences;
+- signed/deferred Discord HTTP slash commands;
+- `/gnt status`, `events`, `matches`, `bracket`, and player/team `leaderboard`;
 - Four Seasons background worker;
-- durable Discord bot queue/retry/failure tracking;
+- durable bot queue with delivery-time state/privacy revalidation;
+- retry/cancel queue controls and recent delivery history;
 - event/check-in/match/result-confirmation DMs;
-- event, match-ready, match-result, and tournament-winner announcements;
-- temporary private tournament match channels and cleanup;
-- competitor and champion Discord role synchronization;
+- event/match-ready/result/winner announcements;
+- idempotent private tournament match channels and cleanup;
+- competitor/champion Discord role sync;
 - worker heartbeat and queue-health UI;
-- mobile/accessibility/profile polish.
+- mobile/accessibility/navigation/profile polish.
 
 ## Database migration — required once
 
-**Back up the production database first.**
-
-Import exactly once after migration 010:
+**Back up production first.** Import exactly once after migration 010:
 
 ```text
 database/011_v100_discord_bot_beta.sql
 ```
 
-Do not rerun migrations `001` through `010`, and do not rerun `011` after it succeeds.
+Do not rerun migrations `001` through `010`, and do not rerun `011` after success.
 
 Migration 011 creates:
 
@@ -43,9 +42,9 @@ Migration 011 creates:
 - `discord_bot_workers`
 - `discord_match_channels`
 
-The v0.9.5 production schema expects 50 base tables after migration 010. Migration 011 adds five, so the current expected total after v1.0 migration is **55 base tables**.
+It also adds persisted bracket-match references to Discord jobs so match automation can be validated and deduplicated safely.
 
-Verification query:
+The v0.9.5 production schema expects 50 base tables after migration 010. Migration 011 adds five, so the current expected total is **55 base tables**.
 
 ```sql
 SELECT COUNT(*) AS table_count
@@ -54,7 +53,7 @@ WHERE table_schema = DATABASE()
   AND table_type = 'BASE TABLE';
 ```
 
-Current expected result after migration 011:
+Current expected result:
 
 ```text
 55
@@ -64,47 +63,46 @@ If later v1.0 development adds another migration/table, update this runbook befo
 
 ## Website environment
 
-Retain all existing production environment values and add/confirm:
+Retain all existing production values and add/confirm:
 
 ```text
 DISCORD_CLIENT_ID=<existing Game Night Tools Discord application ID>
 DISCORD_BOT_TOKEN=<bot token>
 DISCORD_PUBLIC_KEY=<Discord application public key>
-BOT_WORKER_SECRET=<new long random secret shared only with Four Seasons worker>
+BOT_WORKER_SECRET=<new long random secret shared only with Four Seasons>
 ```
 
 Security rules:
 
 - do not reuse `AUTH_SECRET` or `CODE_PEPPER` for `BOT_WORKER_SECRET`;
 - never commit the Discord bot token;
-- rotate the token immediately if exposed;
-- Four Seasons does not need the website database password or OAuth client secret.
+- rotate an exposed token immediately;
+- Four Seasons does not receive database/OAuth secrets.
 
 ## Discord Developer Portal
 
-Before bot testing, configure the Game Night Tools application interaction endpoint:
+Configure:
 
 ```text
 https://gamenights.sayrejeri.com/api/discord/interactions
 ```
 
-Confirm Discord accepts the endpoint PING/signature verification.
+as the application Interactions Endpoint URL and confirm Discord accepts the signed endpoint verification.
 
-The optional bot uses the same Discord application/client ID as Game Night Tools OAuth unless the release plan is intentionally changed before v1.0.
+The command route returns an immediate deferred ephemeral acknowledgement for valid `/gnt` guild commands, then edits the original response after database/leaderboard work finishes.
 
 ## Four Seasons worker environment
 
-Deploy the `bot-worker/` directory as the always-on worker.
-
-Configure:
+Deploy `bot-worker/` as the always-on worker.
 
 ```text
 GNT_APP_URL=https://gamenights.sayrejeri.com
-BOT_WORKER_SECRET=<exactly matches website BOT_WORKER_SECRET>
+BOT_WORKER_SECRET=<exactly matches website>
 DISCORD_BOT_TOKEN=<same bot token as website>
 BOT_WORKER_ID=four-seasons-main
 BOT_WORKER_VERSION=1.0.0-beta.1
 BOT_POLL_SECONDS=10
+BOT_CLAIM_LIMIT=1
 BOT_SCHEDULE_SECONDS=60
 ```
 
@@ -114,13 +112,13 @@ Start command:
 npm start
 ```
 
-Current worker requirements:
+Current requirements:
 
 - Node.js 20.9+
 - no npm runtime dependencies beyond Node itself
 - outbound HTTPS access to Game Night Tools and Discord
 
-Do not configure on Four Seasons:
+Do **not** configure:
 
 ```text
 DATABASE_URL
@@ -129,128 +127,127 @@ DISCORD_CLIENT_SECRET
 CODE_PEPPER
 ```
 
+Keep `BOT_CLAIM_LIMIT=1` during the beta so each job is revalidated immediately before execution.
+
+Current worker resilience assumptions:
+
+- website request timeout: 15 seconds;
+- Discord request timeout: 20 seconds;
+- worker result callback retries: 3;
+- abandoned PROCESSING lock recovery: 2 minutes;
+- five Discord job attempts maximum before FAILED.
+
 ## Pre-merge release gate
 
-1. Confirm PR #34 remains draft while development is incomplete.
-2. Complete the focused checks in:
-
-```text
-docs/V100_TEST_PLAN.md
-```
-
-3. Confirm **PR regression checks** are green on the exact final branch head.
-4. Confirm TypeScript typecheck succeeds.
-5. Confirm production build succeeds.
-6. Review all open PR comments/threads and resolve genuine release blockers.
-7. Verify migration 011 on a backup/staging database.
+1. Keep PR #34 draft while development is incomplete.
+2. Complete `docs/V100_TEST_PLAN.md`.
+3. Confirm **PR regression checks** green on the exact final head.
+4. Confirm the workflow includes and passes `node --check bot-worker/index.mjs`.
+5. Confirm TypeScript typecheck and production build succeed.
+6. Review open PR comments/threads for genuine blockers.
+7. Verify migration 011 on backup/staging data.
 8. Verify website operation with the bot disabled and Four Seasons stopped.
-9. Verify a test Discord server with the bot enabled and Four Seasons running.
+9. Verify a controlled Discord server with the bot and Four Seasons enabled.
 10. Only then mark PR #34 ready for review.
 
 ## Versioning before merge
 
-Before final release, update version metadata to `1.0.0` only after feature scope is frozen and tests are passing.
-
-Do not bump the version repeatedly while the draft branch is still under active development.
+Change version metadata to `1.0.0` only after scope is frozen and release checks are passing. Do not repeatedly bump the version while the draft branch is still moving.
 
 ## After merge
 
-Run the normal local release verification again from:
-
-```text
-main
-```
-
-Confirm final version metadata is `1.0.0`.
-
-Create the final DirectAdmin deployment ZIP from merged `main`. Do not deploy a pre-merge draft branch ZIP as the production v1.0 artifact.
+Re-run release verification from merged `main`, confirm final `1.0.0` metadata, and create the final DirectAdmin deployment ZIP from merged `main`. Do not deploy a draft-branch ZIP as the production v1.0 artifact.
 
 ## Production deployment order
 
-Recommended order:
-
-1. Put a maintenance plan/rollback window in place.
-2. Back up the current application files.
-3. Back up the production database.
-4. Stop the Four Seasons worker if it is already running from a test deployment.
+1. Establish maintenance/rollback window.
+2. Back up application files.
+3. Back up production database.
+4. Stop any test Four Seasons worker.
 5. Apply `database/011_v100_discord_bot_beta.sql` exactly once.
-6. Verify the database base-table count is currently 55.
-7. Upload/extract the verified merged-main website release.
-8. Add/confirm website bot environment variables.
-9. Restart the Game Night Tools Node application.
-10. Verify the normal website without starting Four Seasons yet.
-11. Configure/verify the Discord Interactions Endpoint URL.
-12. Deploy the matching `bot-worker/` build to Four Seasons.
-13. Configure Four Seasons environment values.
-14. Start the worker.
-15. Confirm Bot Settings reports the worker ONLINE within 90 seconds.
-16. Install/check the bot in a test workspace before enabling automation in production workspaces.
-17. Enable each workspace bot feature intentionally; all v1.0 bot automation defaults off.
+6. Verify current expected table count: 55.
+7. Upload/extract verified merged-main website release.
+8. Add/confirm website bot environment values.
+9. Restart Game Night Tools.
+10. Verify normal website operation **before** starting Four Seasons.
+11. Configure/verify Discord Interactions Endpoint URL.
+12. Deploy matching `bot-worker/` build to Four Seasons.
+13. Configure Four Seasons environment, including `BOT_CLAIM_LIMIT=1`.
+14. Start worker.
+15. Confirm Bot Settings reports worker ONLINE within 90 seconds.
+16. Install/check the bot in a controlled workspace.
+17. Enable each bot feature intentionally; all advanced automation defaults off.
 
 ## Website post-deploy smoke
 
-Before enabling bot automation:
+Before enabling automation:
 
 - Discord login works.
-- Existing server/team/user profiles load.
-- Existing events/brackets/Match Center/Series Desk load.
-- Community chat and notifications load.
+- Existing user/team/server profiles load.
+- Events/brackets/Match Center/Series Desk load.
+- Community chat/notifications load.
 - Existing webhook-only servers remain unaffected.
 - Staff Dashboard loads.
-- Manage Server Profiles permission works independently of staff title.
-- Manage Team Profiles permission works independently of staff title.
-- Public profile badge strip renders and wraps correctly.
-- Profile Settings exposes Discord DM preferences.
+- Manage Server Profiles and Manage Team Profiles work independently of staff title.
+- Public badge strip renders/wraps correctly.
+- Profile Settings exposes DM preferences.
 - Bot Settings loads for authorized workspace managers.
+- Recent bot-job history/Retry failed/Cancel queued controls render correctly.
 
-## Bot post-deploy smoke
+## Discord/Four Seasons post-deploy smoke
 
 Use a controlled Discord workspace first:
 
-- Install bot.
-- Check connection.
-- Confirm slash commands register.
-- Run `/gnt status`.
-- Run `/gnt events`.
-- Run `/gnt matches`.
-- Run `/gnt bracket` when a bracket exists.
-- Run player and team `/gnt leaderboard`.
-- Confirm Four Seasons worker heartbeat is ONLINE.
-- Confirm queue counts move as a test job processes.
-- Opt one test user into DMs and verify a controlled reminder.
-- Configure a test announcement channel and verify announcement delivery.
-- Configure a test match category and verify private match-channel creation/cleanup.
-- Configure test competitor/champion roles below the bot's highest role and verify add/remove behavior.
+- install bot and Check connection;
+- confirm slash commands register;
+- run `/gnt status`, `events`, `matches`, `bracket`, and both leaderboard types;
+- confirm command responses complete through deferred/edit-original handling;
+- confirm Four Seasons heartbeat ONLINE;
+- confirm queue counts move as a job processes;
+- opt one test user into DMs and verify a controlled reminder;
+- configure a test announcement channel and verify delivery;
+- configure a test match category and verify private channel create/cleanup;
+- verify bot itself can post inside the private match channel;
+- configure competitor/champion roles below the bot's highest role and verify add/remove behavior.
+
+## Idempotency/recovery smoke
+
+Before broad rollout:
+
+1. Queue a test announcement or DM and interrupt the worker's website callback after Discord accepts the message. Confirm retry does not intentionally create a second message.
+2. Create a test match channel, interrupt the success-report path, and retry. Confirm the worker finds the `gnt-match:<match-id>` channel topic and reuses it.
+3. Confirm another PENDING/PROCESSING CREATE_MATCH_CHANNEL job is not scheduled for the same match.
+4. Stop the worker with one job PROCESSING and confirm stale recovery happens after roughly two minutes.
+5. Queue a reminder, disable the relevant user/server setting, then start the worker. Confirm the queued job becomes CANCELLED rather than delivered.
+6. Retry a FAILED but now-stale job from Bot Settings. Confirm delivery-time validation cancels it.
 
 ## Safe failure checks
 
-Before broad rollout, deliberately test at least one permission failure:
-
-- remove Send Messages from the bot for the test announcement channel; or
-- place a synced role above the bot's highest Discord role.
+Deliberately test at least one Discord permission failure, such as removing Send Messages from the announcement channel or moving a synced role above the bot.
 
 Confirm:
 
-- the Discord job fails visibly;
-- the website event/bracket state remains correct;
-- the worker does not crash permanently;
+- the job fails visibly;
+- website event/bracket state remains correct;
+- worker continues running;
 - no repeated spam loop occurs;
-- failed job information appears in Bot Settings/queue state.
+- failed job information is visible in Bot Settings;
+- after correcting the configuration, Retry failed can safely requeue the job.
 
 ## Rollback
 
-If the website must be rolled back after migration 011:
+If the whole website must roll back after migration 011:
 
-- stop the Four Seasons worker first so it stops claiming/scheduling jobs;
-- do not blindly drop the new tables;
+- stop Four Seasons first;
+- do not blindly drop new tables;
 - do not rerun older migrations;
 - restore the matching pre-deploy database backup if a full schema rollback is required.
 
-If only the bot beta needs to be disabled while keeping the v1.0 website:
+If only the bot beta needs to be disabled:
 
 - disable workspace bot feature toggles;
-- stop the Four Seasons worker;
+- stop Four Seasons;
 - optionally remove the bot from Discord workspaces;
-- leave website event/tournament data untouched.
+- leave event/tournament data untouched.
 
-Because the bot beta is optional, the website should remain usable with the worker stopped.
+Because the bot beta is optional, the website must remain usable with the worker stopped.
