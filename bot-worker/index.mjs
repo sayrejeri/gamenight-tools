@@ -3,6 +3,7 @@ const WORKER_SECRET = process.env.BOT_WORKER_SECRET || "";
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || "";
 const WORKER_ID = (process.env.BOT_WORKER_ID || `four-seasons-${process.pid}`).slice(0, 120);
 const POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.BOT_POLL_SECONDS || 10) * 1000));
+const SCHEDULE_MS = Math.max(30000, Math.min(300000, Number(process.env.BOT_SCHEDULE_SECONDS || 60) * 1000));
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
 if (!APP_URL || !WORKER_SECRET || !DISCORD_BOT_TOKEN) {
@@ -11,6 +12,7 @@ if (!APP_URL || !WORKER_SECRET || !DISCORD_BOT_TOKEN) {
 }
 
 let stopping = false;
+let lastScheduleAt = 0;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,7 +124,16 @@ async function report(jobId, success, error = null) {
   });
 }
 
+async function runSchedulerIfDue() {
+  const now = Date.now();
+  if (now - lastScheduleAt < SCHEDULE_MS) return;
+  const result = await websiteRequest("/api/internal/bot/schedule", { workerId: WORKER_ID });
+  lastScheduleAt = now;
+  if (result.queued) console.log(`[scheduler] queued ${result.queued} bot job(s)`);
+}
+
 async function runOnce() {
+  await runSchedulerIfDue();
   const claim = await websiteRequest("/api/internal/bot/jobs/claim", { workerId: WORKER_ID, limit: 10 });
   const jobs = Array.isArray(claim.jobs) ? claim.jobs : [];
   for (const job of jobs) {
@@ -140,7 +151,7 @@ async function runOnce() {
 }
 
 async function main() {
-  console.log(`Game Night Tools bot worker started as ${WORKER_ID}. Polling every ${POLL_MS / 1000}s.`);
+  console.log(`Game Night Tools bot worker started as ${WORKER_ID}. Polling every ${POLL_MS / 1000}s; scheduler every ${SCHEDULE_MS / 1000}s.`);
   while (!stopping) {
     try {
       const count = await runOnce();
