@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { getPlatformRole } from "@/lib/platform-access";
+import { hasPlatformPermission } from "@/lib/permissions";
 
 type TeamRow = RowDataPacket & {
   id: string;
@@ -25,8 +25,7 @@ type TeamRow = RowDataPacket & {
 
 export default async function StaffTeamsPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   const session = await requireSession();
-  const role = await getPlatformRole(session.userId);
-  if (role !== "OWNER" && role !== "ADMIN") notFound();
+  if (!await hasPlatformPermission(session.userId, "MANAGE_TEAMS")) notFound();
 
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
@@ -64,7 +63,7 @@ export default async function StaffTeamsPage({ searchParams }: { searchParams: P
       </form>
 
       <section className="panel section-stack">
-        <div className="section-header"><div><h2>{q || status ? "Matching team profiles" : "All team profiles"}</h2><p>{teams.length} profiles shown. Platform Owners and Admins can open any team for direct profile administration.</p></div></div>
+        <div className="section-header"><div><h2>{q || status ? "Matching team profiles" : "All team profiles"}</h2><p>{teams.length} profiles shown. Staff with Manage Team Profiles can open any team for direct profile administration.</p></div></div>
         {teams.length ? (
           <div className="organization-grid">
             {teams.map((team) => (
