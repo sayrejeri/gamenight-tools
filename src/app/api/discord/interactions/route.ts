@@ -2,19 +2,39 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { query } from "@/lib/db";
 import { verifyDiscordInteractionSignature } from "@/lib/discord-bot";
+import { loadPlayerLeaderboard, loadTeamLeaderboard } from "@/lib/competitive-stats";
 
+type DiscordOption = {
+  type: number;
+  name: string;
+  value?: string | number | boolean;
+  options?: DiscordOption[];
+};
 type DiscordInteraction = {
   type: number;
   guild_id?: string;
   data?: {
     name?: string;
-    options?: Array<{ type: number; name: string }>;
+    options?: DiscordOption[];
   };
 };
 
 type WorkspaceRow = RowDataPacket & { id: string; name: string; discord_guild_id: string };
 type CountRow = RowDataPacket & { total: number };
 type EventRow = RowDataPacket & { id: string; name: string; status: string; starts_at: Date | null };
+type MatchRow = RowDataPacket & {
+  id: string;
+  event_id: string;
+  event_name: string;
+  round_number: number;
+  match_number: number;
+  status: string;
+  scheduled_at: Date | null;
+  a_name: string | null;
+  b_name: string | null;
+  c_name: string | null;
+};
+type BracketRow = RowDataPacket & { event_id: string; event_name: string; event_status: string; bracket_status: string; format: string };
 
 function interactionMessage(content: string, ephemeral = true) {
   return NextResponse.json({
@@ -29,6 +49,10 @@ function interactionMessage(content: string, ephemeral = true) {
 
 function appUrl(): string {
   return (process.env.APP_URL?.trim() || "https://gamenights.sayrejeri.com").replace(/\/$/, "");
+}
+
+function discordTime(value: Date | null) {
+  return value ? `<t:${Math.floor(new Date(value).getTime() / 1000)}:F>` : "Time TBA";
 }
 
 export async function POST(request: Request) {
@@ -57,7 +81,8 @@ export async function POST(request: Request) {
   const workspace = workspaces[0];
   if (!workspace) return interactionMessage("This Discord server is not connected to an approved Game Night Tools server profile yet.");
 
-  const subcommand = interaction.data.options?.[0]?.name ?? "status";
+  const command = interaction.data.options?.[0];
+  const subcommand = command?.name ?? "status";
   const baseUrl = appUrl();
 
   if (subcommand === "events") {
@@ -72,11 +97,68 @@ export async function POST(request: Request) {
     );
     if (!events.length) return interactionMessage(`**${workspace.name}** has no upcoming published events right now.\n${baseUrl}/dashboard/workspaces/${workspace.id}`);
 
-    const lines = events.map((event) => {
-      const when = event.starts_at ? `<t:${Math.floor(new Date(event.starts_at).getTime() / 1000)}:F>` : "Time TBA";
-      return `• **${event.name}** — ${when} · ${event.status.replaceAll("_", " ").toLowerCase()}\n  ${baseUrl}/dashboard/events/${event.id}`;
-    });
+    const lines = events.map((event) => `• **${event.name}** — ${discordTime(event.starts_at)} · ${event.status.replaceAll("_", " ").toLowerCase()}\n  ${baseUrl}/dashboard/events/${event.id}`);
     return interactionMessage(`**Upcoming ${workspace.name} events**\n${lines.join("\n")}`);
+  }
+
+  if (subcommand === "matches") {
+    const matches = await query<MatchRow[]>(
+      `SELECT bm.id, e.id AS event_id, e.name AS event_name, bm.round_number, bm.match_number,
+              bm.status, bm.scheduled_at,
+              a.display_name AS a_name, b.display_name AS b_name, c.display_name AS c_name
+       FROM bracket_matches bm
+       INNER JOIN brackets br ON br.id = bm.bracket_id
+       INNER JOIN events e ON e.id = br.event_id
+       LEFT JOIN bracket_entries a ON a.id = bm.participant_a_entry_id
+       LEFT JOIN bracket_entries b ON b.id = bm.participant_b_entry_id
+       LEFT JOIN bracket_entries c ON c.id = bm.participant_c_entry_id
+       WHERE e.workspace_id = ? AND e.visibility IN ('SERVER', 'PUBLIC')
+         AND e.status IN ('SIGNUPS_CLOSED', 'CHECK_IN_OPEN', 'LIVE', 'POSTPONED')
+         AND bm.status IN ('PENDING', 'READY', 'LIVE', 'AWAITING_CONFIRMATION', 'DISPUTED')
+         AND (bm.participant_a_entry_id IS NOT NULL OR bm.participant_b_entry_id IS NOT NULL OR bm.participant_c_entry_id IS NOT NULL)
+       ORDER BY FIELD(bm.status, 'LIVE', 'DISPUTED', 'AWAITING_CONFIRMATION', 'READY', 'PENDING'),
+                COALESCE(bm.scheduled_at, '9999-12-31'), bm.round_number, bm.match_number
+       LIMIT 5`,
+      [workspace.id],
+    );
+    if (!matches.length) return interactionMessage(`**${workspace.name}** has no active or scheduled tournament matches right now.`);
+    const lines = matches.map((match) => {
+      const players = [match.a_name, match.b_name, match.c_name].filter(Boolean).join(" vs ") || "Entrants TBA";
+      const when = match.scheduled_at ? ` · ${discordTime(match.scheduled_at)}` : "";
+      return `• **${match.event_name}** R${match.round_number} M${match.match_number} — ${players}\n  ${match.status.replaceAll("_", " ").toLowerCase()}${when}`;
+    });
+    return interactionMessage(`**${workspace.name} tournament matches**\n${lines.join("\n")}`);
+  }
+
+  if (subcommand === "bracket") {
+    const brackets = await query<BracketRow[]>(
+      `SELECT e.id AS event_id, e.name AS event_name, e.status AS event_status, br.status AS bracket_status, br.format
+       FROM brackets br INNER JOIN events e ON e.id = br.event_id
+       WHERE e.workspace_id = ? AND e.visibility IN ('SERVER', 'PUBLIC')
+         AND br.status IN ('GENERATED', 'LIVE', 'COMPLETED')
+         AND e.status NOT IN ('DRAFT', 'AWAITING_APPROVAL', 'CANCELLED')
+       ORDER BY FIELD(br.status, 'LIVE', 'GENERATED', 'COMPLETED'), COALESCE(br.completed_at, br.generated_at, br.updated_at) DESC
+       LIMIT 1`,
+      [workspace.id],
+    );
+    const bracket = brackets[0];
+    if (!bracket) return interactionMessage(`**${workspace.name}** does not have a generated competition to show right now.`);
+    return interactionMessage(`🏆 **${bracket.event_name}**\n${bracket.format.replaceAll("_", " ").toLowerCase()} · ${bracket.bracket_status.toLowerCase()}\n${baseUrl}/dashboard/events/${bracket.event_id}`);
+  }
+
+  if (subcommand === "leaderboard") {
+    const typeOption = command?.options?.find((option) => option.name === "type")?.value;
+    const leaderboardType = typeOption === "teams" ? "teams" : "players";
+    if (leaderboardType === "teams") {
+      const rows = (await loadTeamLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
+      if (!rows.length) return interactionMessage(`**${workspace.name}** does not have enough public completed team competition history for a leaderboard yet.`);
+      const lines = rows.map((row, index) => `${index + 1}. **${row.name}** — ${row.wins}-${row.losses} · ${row.championships} title${row.championships === 1 ? "" : "s"}`);
+      return interactionMessage(`**${workspace.name} public team leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}&type=teams`);
+    }
+    const rows = (await loadPlayerLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
+    if (!rows.length) return interactionMessage(`**${workspace.name}** does not have enough public completed player competition history for a leaderboard yet.`);
+    const lines = rows.map((row, index) => `${index + 1}. **${row.displayName}** — ${row.wins}-${row.losses} · ${row.championships} title${row.championships === 1 ? "" : "s"}`);
+    return interactionMessage(`**${workspace.name} public player leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}`);
   }
 
   const counts = await query<CountRow[]>(
@@ -87,5 +169,5 @@ export async function POST(request: Request) {
     [workspace.id],
   );
   const upcoming = Number(counts[0]?.total ?? 0);
-  return interactionMessage(`✅ **${workspace.name}** is connected to the Game Night Tools bot beta.\nUpcoming published events: **${upcoming}**\n${baseUrl}/dashboard/workspaces/${workspace.id}`);
+  return interactionMessage(`✅ **${workspace.name}** is connected to the Game Night Tools bot beta.\nUpcoming published events: **${upcoming}**\nCommands: \`/gnt events\`, \`/gnt matches\`, \`/gnt bracket\`, \`/gnt leaderboard\`\n${baseUrl}/dashboard/workspaces/${workspace.id}`);
 }
