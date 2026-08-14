@@ -164,8 +164,8 @@ jobs:
           }
 
           $websiteResult = New-ReleaseZip -SourceRoot $deploy -Destination $zipPath -RequiredEntries @(".next/BUILD_ID", "server.js", "package.json", "VERSION") -MinimumFiles 20 -MinimumBytes 100000
-          if ($artifactLabel -eq "v1.0.0" -and $websiteResult.Entries -notcontains "database/011_v100_discord_bot_beta.sql") {
-            throw "ZIP verification failed: v1.0.0 migration is missing."
+          if ((Test-Path "database\011_v100_discord_bot_beta.sql") -and $websiteResult.Entries -notcontains "database/011_v100_discord_bot_beta.sql") {
+            throw "ZIP verification failed: v1.0 bot migration is missing."
           }
 
           $workerResult = $null
