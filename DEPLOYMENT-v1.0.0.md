@@ -152,13 +152,39 @@ Current worker resilience assumptions:
 9. Verify a controlled Discord server with the bot and Four Seasons enabled.
 10. Only then mark PR #34 ready for review.
 
+## Staging artifact generation
+
+The branch intentionally keeps the source `VERSION` at the last production version until the manual v1.0 release gate is complete. Do **not** change it just to create test packages.
+
+Run the **Local release verification** workflow with:
+
+```text
+ref: feature/v1.0-platform-polish-bot-beta
+artifact_label: v1.0.0-staging
+```
+
+The custom artifact label prevents the staging build from overwriting or masquerading as the existing v0.9.5 production ZIP.
+
+The self-hosted Windows runner should create:
+
+```text
+C:\GameNightToolsRelease\gamenight-tools-v1.0.0-staging-directadmin.zip
+C:\GameNightToolsRelease\gamenight-tools-bot-worker-v1.0.0-staging.zip
+```
+
+The workflow verifies the website build, production dependency audit, migration 011 schema when present, Four Seasons worker syntax, TypeScript, ZIP paths/content, and that the DirectAdmin package contains migration 011 when the selected ref contains it.
+
+Use the `v1.0.0-staging` artifacts **only** for controlled staging/manual release testing. They are not the final production v1.0 artifacts.
+
+After the manual release gate passes, update version metadata to `1.0.0`, merge the approved PR, run **Local release verification** again from merged `main` with the artifact label left blank, and use only those final VERSION-based ZIPs for production.
+
 ## Versioning before merge
 
 Change version metadata to `1.0.0` only after scope is frozen and release checks are passing. Do not repeatedly bump the version while the draft branch is still moving.
 
 ## After merge
 
-Re-run release verification from merged `main`, confirm final `1.0.0` metadata, and create the final DirectAdmin deployment ZIP from merged `main`. Do not deploy a draft-branch ZIP as the production v1.0 artifact.
+Re-run release verification from merged `main`, confirm final `1.0.0` metadata, and create the final DirectAdmin deployment ZIP from merged `main`. The v1.0 workflow also creates a separate Four Seasons worker ZIP when `bot-worker/` is present. Do not deploy a draft-branch staging ZIP as the production v1.0 artifact.
 
 ## Production deployment order
 
