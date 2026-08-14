@@ -70,7 +70,8 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
   const [connections, teams, workspaces, eventCandidates] = await Promise.all([
     user.show_game_identities || isOwner ? query<ConnectionRow[]>(
       `SELECT connection_type, external_id, handle, display_name, profile_url, avatar_url, is_verified
-       FROM user_connections WHERE user_id = ? AND (is_visible = 1 OR ? = 1)
+       FROM user_connections
+       WHERE user_id = ? AND is_visible >= 0 AND (is_visible = 1 OR ? = 1)
        ORDER BY is_verified DESC, connection_type ASC`,
       [user.id, isOwner ? 1 : 0],
     ) : Promise.resolve([] as ConnectionRow[]),
