@@ -4,7 +4,8 @@ import type { RowDataPacket } from "mysql2";
 import { getDiscordAvatarUrl, readSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { buildConnectionProfileUrl, formatConnectionType } from "@/lib/connections";
-import { getEventViewerAccess } from "@/lib/event-view-access";
+import { getEventManagerWorkspaceScope, getEventViewerAccess } from "@/lib/event-view-access";
+import { loadPlayerCompetitiveProfile } from "@/lib/competitive-stats";
 import { getPlatformRole } from "@/lib/platform-access";
 import { PlatformIcon } from "@/components/platform-icon";
 import { LocalDateTime } from "@/components/local-date-time";
@@ -69,7 +70,13 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
     viewerHasBlocked = blocked.some((item) => item.blocker_user_id === viewer.userId);
   }
 
-  const [connections, teams, workspaces, eventCandidates, platformRole] = await Promise.all([
+  const viewerUserId = viewer?.userId ?? null;
+  const managerScope = viewerUserId
+    ? await getEventManagerWorkspaceScope(viewerUserId)
+    : { allWorkspaces: false, workspaceIds: [] };
+  const showCompetitiveBadges = Boolean(user.show_event_history || isOwner);
+
+  const [connections, teams, workspaces, eventCandidates, platformRole, competitiveProfile] = await Promise.all([
     user.show_game_identities || isOwner ? query<ConnectionRow[]>(
       `SELECT connection_type, external_id, handle, display_name, profile_url, avatar_url, is_verified
        FROM user_connections
@@ -102,11 +109,14 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
       [user.id],
     ) : Promise.resolve([] as EventRow[]),
     getPlatformRole(user.id),
+    showCompetitiveBadges
+      ? loadPlayerCompetitiveProfile(user.id, viewerUserId, managerScope)
+      : Promise.resolve(null),
   ]);
 
   const events: EventRow[] = [];
   for (const event of eventCandidates) {
-    const access = await getEventViewerAccess(viewer?.userId ?? null, event.id);
+    const access = await getEventViewerAccess(viewerUserId, event.id);
     if (!access.canView) continue;
     // Unlisted means link-only. Do not make it discoverable through somebody
     // else's profile unless the viewer owns the profile or manages the event.
@@ -127,6 +137,14 @@ export default async function UserProfilePage({ params }: { params: Promise<{ us
   if (connections.some((connection) => Boolean(connection.is_verified))) profileBadges.push({ key: "verified-identity", label: "Verified game identity", description: "At least one displayed game identity has been resolved or verified by Game Night Tools.", icon: "✔" });
   if (teams.some((team) => team.role === "OWNER")) profileBadges.push({ key: "team-owner", label: "Team Owner", description: "Owns an approved competitive team shown on this profile.", icon: "T" });
   if (workspaces.some((workspace) => workspace.role === "OWNER")) profileBadges.push({ key: "server-owner", label: "Server Owner", description: "Owns an approved server profile shown on this account.", icon: "S" });
+  for (const badge of competitiveProfile?.badges ?? []) {
+    profileBadges.push({
+      key: `competitive-${badge.key}`,
+      label: badge.name,
+      description: badge.description,
+      icon: badge.icon,
+    });
+  }
 
   const avatarUrl = getDiscordAvatarUrl(user.discord_id, user.avatar_hash);
   return (
