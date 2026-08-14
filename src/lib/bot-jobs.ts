@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { getPool } from "@/lib/db";
@@ -62,6 +62,17 @@ function userToggleForJob(type: BotJobType): keyof UserBotGateRow | null {
 
 function payloadField(payload: unknown, key: string): unknown {
   return payload && typeof payload === "object" && key in payload ? (payload as Record<string, unknown>)[key] : undefined;
+}
+
+function notificationPayloadVersion(type: BotJobType, payload: unknown): string | null {
+  if (!type.startsWith("DM_") && !type.startsWith("ANNOUNCE_")) return null;
+  if (payload === undefined) return null;
+  const serialized = JSON.stringify(payload);
+  return createHash("sha256").update(serialized).digest("hex").slice(0, 12);
+}
+
+function appendDedupeSuffix(base: string, suffix: string): string {
+  return `${base.slice(0, Math.max(0, 191 - suffix.length))}${suffix}`;
 }
 
 export async function enqueueDiscordBotJob(input: {
@@ -134,9 +145,12 @@ export async function enqueueDiscordBotJob(input: {
   }
 
   let dedupeKey = input.dedupeKey?.slice(0, 191) ?? null;
+  const payloadVersion = notificationPayloadVersion(input.type, input.payload);
+  if (dedupeKey && payloadVersion) {
+    dedupeKey = appendDedupeSuffix(dedupeKey, `:v${payloadVersion}`);
+  }
   if (dedupeKey && input.type === "SYNC_ROLE" && resolvedRoleKind && resolvedRoleId) {
-    const suffix = `:${resolvedRoleKind}:${resolvedRoleId}`;
-    dedupeKey = `${dedupeKey.slice(0, Math.max(0, 191 - suffix.length))}${suffix}`;
+    dedupeKey = appendDedupeSuffix(dedupeKey, `:${resolvedRoleKind}:${resolvedRoleId}`);
   }
 
   const [result] = await target.execute(
