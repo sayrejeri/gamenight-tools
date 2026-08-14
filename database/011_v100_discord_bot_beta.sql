@@ -61,3 +61,13 @@ CREATE TABLE discord_bot_jobs (
   CONSTRAINT discord_bot_jobs_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT discord_bot_jobs_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE discord_bot_workers (
+  worker_id VARCHAR(120) NOT NULL,
+  version VARCHAR(40) NULL,
+  metadata_json LONGTEXT NULL,
+  first_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (worker_id),
+  KEY discord_bot_workers_seen_idx (last_seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
