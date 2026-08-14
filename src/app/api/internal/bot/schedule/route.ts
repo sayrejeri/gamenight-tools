@@ -245,6 +245,7 @@ export async function POST(request: Request) {
         workspaceId: match.workspace_id,
         userId,
         eventId: match.event_id,
+        matchId: match.match_id,
         type: "DM_MATCH_REMINDER",
         dedupeKey: `match-reminder:${match.match_id}:${userId}`,
         payload: {
@@ -278,6 +279,7 @@ export async function POST(request: Request) {
         workspaceId: match.workspace_id,
         userId,
         eventId: match.event_id,
+        matchId: match.match_id,
         type: "DM_RESULT_REMINDER",
         dedupeKey: `result-confirm:${match.match_id}:${userId}`,
         payload: {
@@ -307,6 +309,10 @@ export async function POST(request: Request) {
      WHERE w.bot_connected = 1 AND e.status = 'LIVE' AND bm.status IN ('READY','LIVE')
        AND wbs.temporary_match_channels_enabled = 1 AND wbs.match_category_id IS NOT NULL
        AND NOT EXISTS(SELECT 1 FROM discord_match_channels dmc WHERE dmc.match_id = bm.id AND dmc.status = 'ACTIVE')
+       AND NOT EXISTS(
+         SELECT 1 FROM discord_bot_jobs dbj
+         WHERE dbj.match_id = bm.id AND dbj.job_type = 'CREATE_MATCH_CHANNEL' AND dbj.status IN ('PENDING','PROCESSING')
+       )
      ORDER BY bm.updated_at ASC LIMIT 50`,
   );
   for (const match of liveMatches) {
@@ -316,6 +322,7 @@ export async function POST(request: Request) {
     const inserted = await enqueueDiscordBotJob({
       workspaceId: match.workspace_id,
       eventId: match.event_id,
+      matchId: match.match_id,
       type: "CREATE_MATCH_CHANNEL",
       dedupeKey: `match-channel-create:${match.match_id}:${new Date(match.updated_at).getTime()}`,
       payload: {
@@ -342,6 +349,7 @@ export async function POST(request: Request) {
     const inserted = await enqueueDiscordBotJob({
       workspaceId: channel.workspace_id,
       eventId: channel.event_id,
+      matchId: channel.match_id,
       type: "DELETE_MATCH_CHANNEL",
       dedupeKey: `match-channel-delete:${channel.match_id}:${channel.channel_id}`,
       payload: { matchId: channel.match_id, channelId: channel.channel_id },
@@ -374,6 +382,7 @@ export async function POST(request: Request) {
     const inserted = await enqueueDiscordBotJob({
       workspaceId: match.workspace_id,
       eventId: match.event_id,
+      matchId: match.match_id,
       type: "ANNOUNCE_MATCH_READY",
       dedupeKey: `match-ready:${match.match_id}`,
       payload: { content: `⚔️ **Match ready — ${match.event_name}**\nRound ${match.round_number}, Match ${match.match_number}: ${entrants}\n${baseUrl}/dashboard/events/${match.event_id}/matches` },
@@ -407,6 +416,7 @@ export async function POST(request: Request) {
     const inserted = await enqueueDiscordBotJob({
       workspaceId: match.workspace_id,
       eventId: match.event_id,
+      matchId: match.match_id,
       type: "ANNOUNCE_RESULT",
       dedupeKey: `match-result:${match.match_id}:${match.winner_entry_id}`,
       payload: { content: `✅ **${match.event_name} result**\nRound ${match.round_number}, Match ${match.match_number}: **${match.winner_name}** advances.\n${baseUrl}/dashboard/events/${match.event_id}/bracket` },
