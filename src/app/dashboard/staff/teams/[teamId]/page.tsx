@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { getPlatformRole } from "@/lib/platform-access";
+import { hasPlatformPermission } from "@/lib/permissions";
 import { PlatformTeamProfileForm } from "@/components/platform-team-profile-form";
 
 type TeamRow = RowDataPacket & {
@@ -32,8 +32,7 @@ type TeamRow = RowDataPacket & {
 
 export default async function StaffTeamProfilePage({ params }: { params: Promise<{ teamId: string }> }) {
   const session = await requireSession();
-  const role = await getPlatformRole(session.userId);
-  if (role !== "OWNER" && role !== "ADMIN") notFound();
+  if (!await hasPlatformPermission(session.userId, "MANAGE_TEAMS")) notFound();
 
   const { teamId } = await params;
   const teams = await query<TeamRow[]>(
