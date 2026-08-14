@@ -71,3 +71,20 @@ CREATE TABLE discord_bot_workers (
   PRIMARY KEY (worker_id),
   KEY discord_bot_workers_seen_idx (last_seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE discord_match_channels (
+  match_id CHAR(36) NOT NULL,
+  workspace_id CHAR(36) NOT NULL,
+  event_id CHAR(36) NOT NULL,
+  channel_id VARCHAR(32) NOT NULL,
+  status ENUM('ACTIVE','DELETED') NOT NULL DEFAULT 'ACTIVE',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  PRIMARY KEY (match_id),
+  UNIQUE KEY discord_match_channels_channel_unique (channel_id),
+  KEY discord_match_channels_workspace_idx (workspace_id, status, created_at),
+  KEY discord_match_channels_event_idx (event_id, status),
+  CONSTRAINT discord_match_channels_match_fk FOREIGN KEY (match_id) REFERENCES bracket_matches(id) ON DELETE CASCADE,
+  CONSTRAINT discord_match_channels_workspace_fk FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  CONSTRAINT discord_match_channels_event_fk FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
