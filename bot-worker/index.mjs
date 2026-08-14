@@ -66,7 +66,11 @@ async function discordRequest(path, options = {}, retried = false) {
   return body;
 }
 
-function normalizeMessagePayload(payload) {
+function messageNonce(jobId) {
+  return String(jobId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 25) || undefined;
+}
+
+function normalizeMessagePayload(payload, nonce) {
   const content = typeof payload?.content === "string" ? payload.content.slice(0, 1900) : undefined;
   const embeds = Array.isArray(payload?.embeds) ? payload.embeds.slice(0, 10) : undefined;
   if (!content && !embeds?.length) throw new Error("Bot job does not contain a message payload.");
@@ -74,6 +78,7 @@ function normalizeMessagePayload(payload) {
     ...(content ? { content } : {}),
     ...(embeds?.length ? { embeds } : {}),
     allowed_mentions: { parse: [] },
+    ...(nonce ? { nonce, enforce_nonce: true } : {}),
   };
 }
 
@@ -86,40 +91,48 @@ function safeChannelName(value) {
   return (normalized || "match").slice(0, 90);
 }
 
-async function sendDirectMessage(discordUserId, payload) {
-  if (!discordUserId) throw new Error("DM job has no Discord user ID.");
+async function sendDirectMessage(job) {
+  if (!job.targetDiscordId) throw new Error("DM job has no Discord user ID.");
   const dm = await discordRequest("/users/@me/channels", {
     method: "POST",
-    body: JSON.stringify({ recipient_id: discordUserId }),
+    body: JSON.stringify({ recipient_id: job.targetDiscordId }),
   });
   if (!dm?.id) throw new Error("Discord did not return a DM channel.");
   await discordRequest(`/channels/${dm.id}/messages`, {
     method: "POST",
-    body: JSON.stringify(normalizeMessagePayload(payload)),
+    body: JSON.stringify(normalizeMessagePayload(job.payload, messageNonce(job.id))),
   });
 }
 
-async function sendAnnouncement(channelId, payload) {
-  if (!channelId) throw new Error("Announcement job has no configured Discord channel ID.");
-  await discordRequest(`/channels/${channelId}/messages`, {
+async function sendAnnouncement(job) {
+  if (!job.announcementChannelId) throw new Error("Announcement job has no configured Discord channel ID.");
+  await discordRequest(`/channels/${job.announcementChannelId}/messages`, {
     method: "POST",
-    body: JSON.stringify(normalizeMessagePayload(payload)),
+    body: JSON.stringify(normalizeMessagePayload(job.payload, messageNonce(job.id))),
   });
 }
 
 async function createMatchChannel(job) {
   if (!job.discordGuildId || !job.matchCategoryId) throw new Error("Match-channel job is missing its Discord guild or category ID.");
-  const matchId = typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
+  const matchId = typeof job.matchId === "string" && job.matchId ? job.matchId : typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
   const participantDiscordIds = Array.isArray(job.payload?.participantDiscordIds)
     ? [...new Set(job.payload.participantDiscordIds.filter((id) => typeof id === "string" && /^\d{15,25}$/.test(id)))]
     : [];
   if (!matchId || !participantDiscordIds.length) throw new Error("Match-channel job has no valid match or Discord participants.");
+
+  const marker = `gnt-match:${matchId}`;
+  const existingChannels = await discordRequest(`/guilds/${job.discordGuildId}/channels`, { method: "GET" });
+  const existing = Array.isArray(existingChannels)
+    ? existingChannels.find((channel) => channel?.type === 0 && channel?.topic === marker)
+    : null;
+  if (existing?.id) return { channelId: existing.id, matchId, reused: true };
 
   const channel = await discordRequest(`/guilds/${job.discordGuildId}/channels`, {
     method: "POST",
     body: JSON.stringify({
       name: safeChannelName(job.payload?.channelName),
       type: 0,
+      topic: marker,
       parent_id: job.matchCategoryId,
       permission_overwrites: [
         { id: job.discordGuildId, type: 0, deny: "1024" },
@@ -132,15 +145,15 @@ async function createMatchChannel(job) {
   if (typeof job.payload?.content === "string" && job.payload.content.trim()) {
     await discordRequest(`/channels/${channel.id}/messages`, {
       method: "POST",
-      body: JSON.stringify(normalizeMessagePayload({ content: job.payload.content })),
+      body: JSON.stringify(normalizeMessagePayload({ content: job.payload.content }, messageNonce(job.id))),
     });
   }
-  return { channelId: channel.id, matchId };
+  return { channelId: channel.id, matchId, reused: false };
 }
 
 async function deleteMatchChannel(job) {
   const channelId = typeof job.payload?.channelId === "string" ? job.payload.channelId : "";
-  const matchId = typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
+  const matchId = typeof job.matchId === "string" && job.matchId ? job.matchId : typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
   if (!channelId || !matchId) throw new Error("Match-channel cleanup job is incomplete.");
   try {
     await discordRequest(`/channels/${channelId}`, { method: "DELETE" });
@@ -165,11 +178,11 @@ async function syncRole(job) {
 
 async function executeJob(job) {
   if (job.jobType.startsWith("DM_")) {
-    await sendDirectMessage(job.targetDiscordId, job.payload);
+    await sendDirectMessage(job);
     return {};
   }
   if (job.jobType.startsWith("ANNOUNCE_")) {
-    await sendAnnouncement(job.announcementChannelId, job.payload);
+    await sendAnnouncement(job);
     return {};
   }
   if (job.jobType === "CREATE_MATCH_CHANNEL") return createMatchChannel(job);
@@ -194,6 +207,20 @@ async function report(jobId, success, error = null, result = null) {
   });
 }
 
+async function reportWithRetry(jobId, success, error = null, result = null) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await report(jobId, success, error, result);
+      return;
+    } catch (reportError) {
+      lastError = reportError;
+      if (attempt < 3) await sleep(attempt * 1000);
+    }
+  }
+  throw lastError || new Error("Bot job result could not be reported.");
+}
+
 async function runSchedulerIfDue() {
   const now = Date.now();
   if (now - lastScheduleAt < SCHEDULE_MS) return;
@@ -212,14 +239,26 @@ async function runOnce() {
   });
   const jobs = Array.isArray(claim.jobs) ? claim.jobs : [];
   for (const job of jobs) {
+    let result;
     try {
-      const result = await executeJob(job);
-      await report(job.id, true, null, result);
-      console.log(`[sent] ${job.jobType} ${job.id}`);
+      result = await executeJob(job);
     } catch (error) {
       console.error(`[failed] ${job.jobType} ${job.id}:`, error?.message || error);
-      try { await report(job.id, false, error); }
-      catch (reportError) { console.error(`[report-failed] ${job.id}:`, reportError?.message || reportError); }
+      try {
+        await reportWithRetry(job.id, false, error);
+      } catch (reportError) {
+        console.error(`[report-failed] ${job.id}:`, reportError?.message || reportError);
+      }
+      continue;
+    }
+
+    try {
+      await reportWithRetry(job.id, true, null, result);
+      console.log(`[sent] ${job.jobType} ${job.id}`);
+    } catch (reportError) {
+      // The Discord action already succeeded. Do not misclassify it as a delivery
+      // failure; stale-lock recovery can safely retry because actions are idempotent.
+      console.error(`[success-report-failed] ${job.jobType} ${job.id}:`, reportError?.message || reportError);
     }
   }
   return jobs.length;
