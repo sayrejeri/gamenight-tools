@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { canViewChannel, communityScopePath, ensureDefaultCommunityChannels, getCommunityScopeAccess, type CommunityChannelType, type CommunityScopeType } from "@/lib/community-chat";
+import { canViewChannel, communityScopePath, getCommunityScopeAccess, type CommunityChannelType, type CommunityScopeType } from "@/lib/community-chat";
 
 type WorkspaceRow = RowDataPacket & { id: string; name: string; icon_url: string | null; description: string | null };
 type TeamRow = RowDataPacket & { id: string; name: string; slug: string; logo_url: string | null; description: string | null; role: string };
@@ -11,7 +11,6 @@ type ChannelUnreadRow = RowDataPacket & { id: string; channel_type: CommunityCha
 async function unreadForScope(userId: string, scopeType: CommunityScopeType, scopeId: string) {
   const access = await getCommunityScopeAccess(userId, scopeType, scopeId);
   if (!access?.canRead) return 0;
-  await ensureDefaultCommunityChannels(scopeType, scopeId);
   const rows = await query<ChannelUnreadRow[]>(
     `SELECT c.id, c.channel_type,
             (SELECT COUNT(*) FROM community_messages m
