@@ -12,7 +12,8 @@ Game Night Tools uses two cooperating pieces:
    - verifies Discord bot installation;
    - registers guild slash commands;
    - receives signed HTTP slash-command interactions;
-   - schedules durable bot jobs.
+   - schedules durable bot jobs;
+   - tracks worker heartbeats and queue health.
 
 2. **The Four Seasons bot worker** in `bot-worker/`
    - runs continuously without direct database credentials;
@@ -20,7 +21,8 @@ Game Night Tools uses two cooperating pieces:
    - runs the reminder scheduler;
    - claims queued jobs;
    - sends Discord DMs/announcements with the bot token;
-   - reports success, retryable failures, or permanent failures back to the website.
+   - reports success, retryable failures, or permanent failures back to the website;
+   - reports its ID, version, Node version, platform, architecture, and regular heartbeat.
 
 This keeps the website as the source of truth while using Four Seasons for reliable background delivery.
 
@@ -28,7 +30,7 @@ Discord supports both Gateway and HTTP interaction models. The initial slash com
 
 ## Database migration
 
-v1.0 bot settings and queue persistence use:
+v1.0 bot settings, queue persistence, and worker health use:
 
 ```text
 database/011_v100_discord_bot_beta.sql
@@ -41,8 +43,9 @@ It creates:
 - `workspace_bot_settings`
 - `user_discord_bot_preferences`
 - `discord_bot_jobs`
+- `discord_bot_workers`
 
-The queue includes dedupe keys, retries, stale-lock recovery, and final failed/sent states.
+The queue includes dedupe keys, retries, stale-lock recovery, and final failed/sent states. The worker table stores first/last heartbeat, worker version, and lightweight runtime metadata.
 
 ## Website environment values
 
@@ -87,6 +90,7 @@ GNT_APP_URL=https://gamenights.sayrejeri.com
 BOT_WORKER_SECRET=<must match website>
 DISCORD_BOT_TOKEN=<same bot token>
 BOT_WORKER_ID=four-seasons-main
+BOT_WORKER_VERSION=1.0.0-beta.1
 BOT_POLL_SECONDS=10
 BOT_SCHEDULE_SECONDS=60
 ```
@@ -100,6 +104,8 @@ npm start
 The worker requires Node.js 20.9+ and has no npm runtime dependencies in the current beta.
 
 The worker never needs `DATABASE_URL`, `AUTH_SECRET`, or the Discord OAuth client secret.
+
+Every queue claim updates the worker heartbeat. The Bot Settings page treats a heartbeat from the last 90 seconds as online and shows worker ID/version plus workspace-specific queued/processing and failed job counts.
 
 ## Installing into a workspace
 
@@ -157,19 +163,25 @@ When workspace announcements are enabled and an announcement channel is configur
 
 Additional v1.0 announcement types—match ready, results, and tournament winner—use the same queue and worker pipeline and will be enabled as those event hooks are finished.
 
-## Initial beta commands
+## Beta commands
 
-The first command group is:
+The current command group is:
 
 ```text
 /gnt status
 /gnt events
+/gnt matches
+/gnt bracket
+/gnt leaderboard
 ```
 
 - `/gnt status` confirms that the Discord guild is connected to its approved Game Night Tools workspace and shows the current number of upcoming published events.
 - `/gnt events` shows up to five upcoming server/public events with Discord-local timestamps and Game Night Tools links.
+- `/gnt matches` shows active/upcoming tournament matches for the connected workspace.
+- `/gnt bracket` points to the current/latest generated competition for the workspace.
+- `/gnt leaderboard` shows public player rankings; its optional type argument can switch to public team rankings.
 
-Responses are ephemeral during the initial beta so commands do not spam community channels while the integration is being tested.
+Leaderboard commands intentionally use public competition history only. Responses are ephemeral during the initial beta so commands do not spam community channels while the integration is being tested.
 
 ## Requested bot permissions
 
