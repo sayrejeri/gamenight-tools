@@ -46,7 +46,7 @@ export default async function WorkspaceBotPage({ params }: { params: Promise<{ w
         <Link className="button button-secondary" href={`/dashboard/workspaces/${workspaceId}`}>Back to server</Link>
       </section>
 
-      <DiscordBotSetupCard workspaceId={workspaceId} configured={configured} connected={Boolean(workspace.bot_connected)} installUrl={buildDiscordBotInstallUrl(workspace.discord_guild_id)} />
+      <DiscordBotSetupCard workspaceId={workspaceId} configured={configured} connected={Boolean(workspace.bot_connected)} installUrl={buildDiscordBotInstallUrl(workspace.discord_guild_id)} showSettingsLink={false} />
 
       <WorkspaceBotSettingsForm workspaceId={workspaceId} initial={{
         dmRemindersEnabled: Boolean(settings?.dm_reminders_enabled ?? 0),
