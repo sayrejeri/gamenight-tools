@@ -16,17 +16,20 @@ const addConnectionSchema = z.object({
 
 const updateConnectionSchema = z.object({
   id: z.string().uuid(),
-  handle: z.string().trim().min(1).max(191),
+  handle: z.string().trim().min(1).max(191).optional(),
   displayName: z.string().trim().max(191).nullable().optional(),
   visible: z.boolean(),
 });
 
 type ExistingConnection = RowDataPacket & {
+  source: "DISCORD" | "MANUAL";
   connection_type: string;
   external_id: string | null;
   profile_url: string | null;
   avatar_url: string | null;
 };
+
+type ConnectionSourceRow = RowDataPacket & { source: "DISCORD" | "MANUAL" };
 
 async function enrichConnection(connectionType: string, handle: string) {
   const normalized = normalizeConnectionType(connectionType);
@@ -96,11 +99,25 @@ export async function PATCH(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid connection update." }, { status: 400 });
 
   const existing = await query<ExistingConnection[]>(
-    `SELECT connection_type, external_id, profile_url, avatar_url
+    `SELECT source, connection_type, external_id, profile_url, avatar_url
      FROM user_connections WHERE id = ? AND user_id = ? LIMIT 1`,
     [parsed.data.id, session.userId],
   );
   if (!existing[0]) return NextResponse.json({ error: "Connection not found." }, { status: 404 });
+
+  if (existing[0].source === "DISCORD") {
+    await getPool().execute(
+      `UPDATE user_connections
+       SET is_visible = ?, updated_at = CURRENT_TIMESTAMP(3)
+       WHERE id = ? AND user_id = ? AND source = 'DISCORD'`,
+      [parsed.data.visible ? 1 : 0, parsed.data.id, session.userId],
+    );
+    return NextResponse.json({ success: true });
+  }
+
+  if (!parsed.data.handle) {
+    return NextResponse.json({ error: "A username or handle is required for a manual identity." }, { status: 400 });
+  }
 
   const enriched = await enrichConnection(existing[0].connection_type, parsed.data.handle);
 
@@ -134,10 +151,29 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "A valid connection ID is required." }, { status: 400 });
   }
 
-  await getPool().execute(
-    `DELETE FROM user_connections WHERE id = ? AND user_id = ?`,
+  const rows = await query<ConnectionSourceRow[]>(
+    `SELECT source FROM user_connections WHERE id = ? AND user_id = ? LIMIT 1`,
     [id, session.userId],
   );
+  if (!rows[0]) return NextResponse.json({ error: "Connection not found." }, { status: 404 });
+
+  if (rows[0].source === "DISCORD") {
+    // Keep a tombstone so Discord refreshes respect the removal, but move it out of
+    // the normal connection type namespace so event/profile consumers cannot select it.
+    await getPool().execute(
+      `UPDATE user_connections
+       SET connection_type = LEFT(CONCAT('REMOVED:', connection_type), 50),
+           is_visible = -1,
+           updated_at = CURRENT_TIMESTAMP(3)
+       WHERE id = ? AND user_id = ? AND source = 'DISCORD'`,
+      [id, session.userId],
+    );
+  } else {
+    await getPool().execute(
+      `DELETE FROM user_connections WHERE id = ? AND user_id = ?`,
+      [id, session.userId],
+    );
+  }
 
   return NextResponse.json({ success: true });
 }

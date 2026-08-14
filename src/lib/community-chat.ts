@@ -174,6 +174,14 @@ export async function getActiveCommunityTimeout(userId: string, scopeType: Commu
 }
 
 export async function ensureDefaultCommunityChannels(scopeType: CommunityScopeType, scopeId: string): Promise<void> {
+  const existingRows = await query<(RowDataPacket & { total: number })[]>(
+    `SELECT COUNT(*) AS total FROM community_channels WHERE scope_type = ? AND scope_id = ?`,
+    [scopeType, scopeId],
+  );
+  // Any row, including an archived one, means this scope has already been initialized.
+  // This lets managers intentionally archive every website-chat channel without defaults reappearing.
+  if (Number(existingRows[0]?.total ?? 0) > 0) return;
+
   const ownerRows = scopeType === "WORKSPACE"
     ? await query<(RowDataPacket & { owner_user_id: string })[]>(
         `SELECT CAST(created_by AS CHAR) AS owner_user_id FROM workspaces WHERE id = ? LIMIT 1`,

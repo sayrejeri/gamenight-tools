@@ -32,7 +32,8 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
     query<ConnectionRow[]>(
       `SELECT id, source, connection_type, external_id, handle, display_name,
               profile_url, avatar_url, is_verified, is_visible
-       FROM user_connections WHERE user_id = ?
+       FROM user_connections
+       WHERE user_id = ? AND NOT (source = 'DISCORD' AND is_visible < 0)
        ORDER BY source ASC, connection_type ASC`,
       [session.userId],
     ),
@@ -42,7 +43,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   return (
     <div className="section-stack">
       <section className="page-heading">
-        <div><span className="eyebrow">Your profile</span><h1>Game identities</h1><p>Connections imported from Discord can be changed, hidden, or replaced with your preferred usernames and linked profile pictures.</p></div>
+        <div><span className="eyebrow">Your profile</span><h1>Game identities</h1><p>Discord-imported identities stay synced to Discord and can only be shown, hidden, or removed here. Manual identities remain fully editable.</p></div>
         <div className="button-row">
           {returnTo ? <Link className="button" href={returnTo}>Return to event</Link> : null}
           <Link className="button button-secondary" href="/dashboard/settings">Profile settings</Link>
