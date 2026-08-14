@@ -12,19 +12,18 @@ Game Night Tools uses two cooperating pieces:
    - verifies bot installation and registers guild slash commands;
    - receives signed Discord HTTP interactions;
    - schedules durable bot jobs;
-   - revalidates current settings/privacy/competition state immediately before a job is claimed;
-   - tracks worker heartbeats, queue health, recent job activity, and temporary match-channel mappings.
+   - revalidates current settings/privacy/competition state immediately before claim;
+   - tracks worker heartbeat, queue history, temporary match channels, and bot-managed role assignments.
 
 2. **Four Seasons worker** in `bot-worker/`
    - runs continuously without database credentials;
-   - authenticates to internal Game Night Tools APIs using `BOT_WORKER_SECRET`;
-   - runs the reminder/automation scheduler;
-   - claims jobs, one at a time by default;
-   - sends DMs/announcements, creates/cleans temporary match channels, and synchronizes roles;
-   - reports success/failure and created channel IDs back to the website;
-   - reports ID/version/runtime metadata and a regular heartbeat.
+   - authenticates to internal Game Night Tools APIs with `BOT_WORKER_SECRET`;
+   - runs scheduling plus tracked-role reconciliation;
+   - claims jobs one at a time by default;
+   - sends DMs/announcements, manages temporary channels, and synchronizes exact Discord role IDs;
+   - reports success/failure and created Discord resources back to the website.
 
-Discord failures never decide a tournament result or block the website's event/bracket workflow.
+Discord failures never decide tournament results or block the website's event/bracket workflow.
 
 ## Database migration
 
@@ -34,15 +33,16 @@ Import exactly once after migration `010`:
 database/011_v100_discord_bot_beta.sql
 ```
 
-It creates:
+It currently creates **six** v1.0 tables:
 
 - `workspace_bot_settings`
 - `user_discord_bot_preferences`
 - `discord_bot_jobs`
 - `discord_bot_workers`
 - `discord_match_channels`
+- `discord_role_assignments`
 
-Bot jobs can reference a workspace, user, event, and bracket match. Match references prevent duplicate in-flight match-channel work and cascade safely if a match is removed.
+Bot jobs can reference the exact bracket match and, for role work, the exact role kind/Discord role ID. `discord_role_assignments` records roles that Game Night Tools actually added so cleanup never has to guess which historical role to remove.
 
 ## Website environment
 
@@ -95,44 +95,41 @@ npm start
 
 The worker requires Node.js 20.9+ and currently has no npm runtime dependencies. It does **not** need `DATABASE_URL`, `AUTH_SECRET`, `CODE_PEPPER`, or the Discord OAuth client secret.
 
-`BOT_CLAIM_LIMIT=1` is the recommended beta setting. It ensures each job gets its current settings/state revalidation immediately before execution rather than sitting in a claimed batch.
+`BOT_CLAIM_LIMIT=1` is the recommended beta setting so each job gets current-state revalidation immediately before execution.
 
-Website requests time out after 15 seconds and Discord requests after 20 seconds. Abandoned PROCESSING locks are recovered after two minutes.
+Website requests time out after 15 seconds, Discord requests after 20 seconds, and abandoned PROCESSING locks are recovered after two minutes.
 
 ## Worker health and queue controls
 
-Every claim updates the worker heartbeat. Bot Settings treats a heartbeat from the last 90 seconds as online and shows:
+Every claim updates the worker heartbeat. Bot Settings shows:
 
-- worker ID/version;
-- last heartbeat;
+- online/offline state;
+- worker ID/version and last heartbeat;
 - queued/processing count;
 - failed count;
 - recent job type/status/attempts/errors.
 
-Workspace managers can:
+Workspace managers can **Retry failed** or **Cancel queued** work. Retried jobs still pass delivery-time safety checks.
 
-- **Retry failed** jobs after fixing Discord permissions/settings;
-- **Cancel queued** PENDING jobs.
-
-Retries still pass the delivery-time safety checks. A stale reminder can therefore become CANCELLED instead of being delivered simply because somebody retried the failed queue.
+Manual cancellation keeps the job's dedupe key so the scheduler does not immediately recreate exactly what a manager intentionally cancelled. Automatic safety cancellation clears its dedupe key so a job can be scheduled again later if the server/user/state becomes valid again.
 
 ## Delivery-time revalidation
 
-A feature being enabled when a job was originally queued is not enough. Immediately before delivery, Game Night Tools checks the current state again.
+A feature being enabled when a job was originally queued is not enough. Immediately before delivery, Game Night Tools checks current state again.
 
 Examples:
 
 - user turned DMs off → queued DM is cancelled;
 - server disabled announcements → queued announcement is cancelled;
-- participant already checked in → queued check-in reminder is cancelled;
+- participant already checked in → check-in reminder is cancelled;
 - match was rescheduled/completed → stale match reminder is cancelled;
-- submitted result is no longer awaiting confirmation → result reminder is cancelled;
+- submitted result is no longer awaiting confirmation → confirmation DM is cancelled;
 - event became private/cancelled → public/server announcement is cancelled;
-- match is no longer READY/LIVE → pending channel creation is cancelled;
-- role sync was disabled or the member is no longer eligible → role job is cancelled;
-- competitor-role removal is cancelled if the member now has another active competition in that workspace.
+- tournament winner announcement requires the bracket to still be completed;
+- match no longer READY/LIVE → pending channel creation is cancelled;
+- role ADD requires the same configured role ID that was bound when the job was queued and current eligibility.
 
-Temporary-channel **cleanup** remains allowed even if new channel creation is later disabled.
+Temporary-channel cleanup and tracked-role cleanup are allowed even after the corresponding creation/sync feature is disabled.
 
 ## User DM preferences
 
@@ -164,40 +161,54 @@ When enabled with a configured category:
 
 - READY/LIVE matches can receive a private text channel;
 - `@everyone` is denied view access;
-- the bot receives its own explicit member overwrite so it can still manage/post in the private channel;
-- participating Discord users receive view/send/read-history access;
-- team participation is resolved from the event's saved roster snapshot;
-- the channel topic stores a `gnt-match:<match-id>` marker;
-- before creating a channel, the worker looks for that marker and reuses the existing channel on a retry;
-- `discord_match_channels` persists the successful mapping;
+- the bot receives an explicit member overwrite so it can still manage/post there;
+- participants get view/send/read-history access;
+- team participation comes from the event's saved roster snapshot;
+- the topic stores `gnt-match:<match-id>`;
+- retries look for that marker and reuse an already-created channel;
+- `discord_match_channels` persists the mapping;
 - another PENDING/PROCESSING create job for the same match blocks a second scheduler create;
 - completed/forfeit matches and completed/cancelled competitions queue cleanup;
-- a Discord 404 while deleting is treated as already-cleaned success;
-- disabling new creation does not block cleanup of an existing channel.
+- Discord 404 during deletion is treated as already-cleaned success;
+- disabling new creation does not block existing-channel cleanup.
 
-The topic marker protects against a network/report failure after Discord already created the channel but before Game Night Tools recorded its ID.
+## Role synchronization and reconciliation
 
-## Role synchronization
+Each successful role ADD is recorded in `discord_role_assignments` with:
+
+- workspace;
+- Game Night Tools user;
+- role kind (`COMPETITOR` or `CHAMPION`);
+- exact Discord role ID;
+- source event;
+- active/removed lifecycle timestamps.
 
 ### Competitor role
 
-- approved direct participants in active events can receive the configured competitor role;
+- approved direct participants in active events can receive the configured role;
 - registered team-entry members use the saved event roster snapshot;
-- completed/cancelled events remove it only when the member has no other active competition in that workspace;
+- an active assignment is removed only when the member no longer has another active competition in that workspace, role sync is disabled, or the configured competitor role ID changes;
 - postponed competitions count as active.
 
 ### Champion role
 
 - direct-player champions can receive the configured champion role after bracket completion;
-- team champions apply it to the saved event roster snapshot.
+- team champions use the saved event roster snapshot;
+- tracked champion assignments are removed if the source event no longer has that champion, role sync is disabled, or the configured champion role changes.
 
-Role operations are idempotent Discord PUT/DELETE operations and are revalidated before delivery.
+### Exact-role cleanup
+
+Once per scheduler interval, Four Seasons calls the role-reconciliation endpoint. It examines ACTIVE bot-managed assignments and queues REMOVE jobs against the **historical role ID actually assigned**, not the workspace's current role setting.
+
+This means changing role A → role B can safely remove A while new ADD jobs target B. A role REMOVE remains valid even if role sync has already been disabled. Completed/cancelled role-job dedupe keys for the removed role are released so that same Discord role can be used again in a later event/config cycle.
+
+Role operations use Discord's idempotent member-role PUT/DELETE endpoints and are revalidated before delivery.
 
 ## Message idempotency
 
-DMs, announcements, and temporary-channel intro messages send the queue job ID as a Discord message nonce with nonce enforcement enabled. If a Discord message succeeds but the worker loses the response/report path and retries shortly afterward, Discord can return the already-created message rather than creating another one.
+DMs, announcements, and temporary-channel intro messages send a job-derived Discord nonce with nonce enforcement enabled. If Discord accepted a message but the worker temporarily lost its report path, a quick retry can reuse the existing Discord message instead of intentionally creating a second one.
 
-Worker success reporting is separate from Discord execution. A Discord action that succeeded is not deliberately reclassified as a failed Discord action merely because reporting the success back to the website temporarily failed.
+Worker success reporting is separate from Discord execution. A successful Discord action is not deliberately reclassified as a Discord failure merely because reporting success back to the website temporarily failed.
 
 ## Slash commands
 
@@ -217,30 +228,29 @@ Current commands:
 - `/gnt bracket` — current/latest generated bracket link.
 - `/gnt leaderboard` — public player rankings, optionally team rankings.
 
-Valid guild commands use a **deferred ephemeral response**. Game Night Tools acknowledges Discord immediately, performs the database/leaderboard work after the HTTP response, then edits the original interaction response. This avoids command failures when a leaderboard/query takes longer than Discord's initial interaction-response window.
+Valid guild commands use a **deferred ephemeral response**. Game Night Tools acknowledges Discord immediately, performs database/leaderboard work after the HTTP response, then edits the original response.
 
 ## Queue lifecycle and failure isolation
 
 - New work starts `PENDING`.
-- A claim revalidates current state, then moves allowed work to `PROCESSING` and increments attempts.
-- Work that is no longer allowed becomes `CANCELLED` before delivery.
+- Claim revalidates current state, then valid work becomes `PROCESSING`.
+- No-longer-valid work becomes `CANCELLED` before delivery and releases its automatic dedupe key.
 - Success becomes `SENT`.
 - Retryable Discord/network failures return to `PENDING` after the retry delay.
 - Permanent failures or five failed attempts become `FAILED`.
-- PROCESSING locks older than **two minutes** are recovered.
-- Worker website callbacks retry three times.
-- The worker uses request timeouts so a dead connection does not hold a job indefinitely.
+- PROCESSING locks older than two minutes are recovered.
+- Website result callbacks retry three times.
 
-A failed DM, announcement, channel operation, or role operation never rolls back or blocks the corresponding website event/bracket action.
+A failed DM, announcement, channel, or role operation never rolls back the corresponding website event/bracket action.
 
 ## CI and release testing
 
-PR regression checks now include:
+PR regression checks include:
 
 ```text
 node --check bot-worker/index.mjs
 ```
 
-in addition to the existing smoke tests, TypeScript typecheck, and production build.
+plus smoke tests, TypeScript typecheck, and production build.
 
 Use `docs/V100_TEST_PLAN.md` before moving draft PR #34 to ready-for-review status.
