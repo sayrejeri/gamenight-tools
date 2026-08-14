@@ -2,7 +2,7 @@
 
 This plan is the focused release gate for **Platform Polish & Discord Bot Beta**.
 
-Do not mark v1.0 ready for review until the exact final branch head passes regression smoke tests, Four Seasons worker syntax validation, TypeScript typecheck, production build, and the applicable manual checks below.
+Do not mark v1.0 ready for review until the exact final branch head passes regression smoke tests, v1.0 migration schema smoke, Four Seasons worker syntax validation, TypeScript typecheck, production dependency audit, production build, and the applicable manual checks below.
 
 ## 1. Baseline regression
 
@@ -39,6 +39,7 @@ Verify:
 - `discord_role_assignments` uniquely tracks workspace + user + role kind + exact Discord role ID.
 - Migration 011 is not rerun after success.
 - Existing `workspaces.bot_connected` data remains intact.
+- `node tests/v100-bot-schema-smoke.cjs` succeeds against the committed migration.
 
 ## 3. Platform profile administration
 
@@ -103,6 +104,8 @@ Verify:
 - Connection-state changes write audit entries.
 - Successful connection check registers current guild slash commands.
 - Command-registration failure can be surfaced without corrupting workspace connection state.
+- Bot Settings exposes a direct **Setup walkthrough** link to `/help/discord-bot`.
+- The main Help page also surfaces the Discord bot beta walkthrough.
 
 ## 7. Workspace bot settings and automatic cancellation
 
@@ -165,6 +168,9 @@ Verify:
 ## 10. Queue reliability and controls
 
 - Scheduler can run once per minute without duplicate trigger jobs.
+- DM/announcement dedupe keys include a deterministic payload-version suffix.
+- Repeated scheduler pass with identical outbound content does not create a new notification job.
+- Change event start time, match scheduled time, confirmation deadline, result/winner content, or another outbound notification field and verify the changed payload can create a fresh job instead of being blocked by an older SENT dedupe key.
 - Match jobs persist real `match_id`.
 - Role jobs persist exact `role_kind` + `discord_role_id`.
 - Role dedupe keys are scoped to exact role ID so role A and role B are separate operations.
@@ -194,6 +200,7 @@ Verify:
 - Approved participant with opt-in receives one reminder around the 24-hour window.
 - Rejected/withdrawn participant does not.
 - Participation/event changes after queueing cancel stale delivery.
+- Rescheduling an eligible event changes the outbound content version and permits the appropriate fresh reminder when the event enters the reminder window again.
 
 ### Check-in reminder
 
@@ -206,12 +213,14 @@ Verify:
 - Scheduled match roughly 20–40 minutes away queues reminder.
 - Link opens `/dashboard/events/{eventId}/matches`.
 - Completion/reschedule outside delivery window before claim cancels reminder.
+- A legitimate changed scheduled time can create a fresh versioned reminder when it becomes eligible again.
 
 ### Result confirmation
 
 - Non-submitting opponent receives confirmation reminder while awaiting confirmation.
 - Submitter does not receive their own reminder.
 - Confirmation/dispute/resolution before claim cancels stale reminder.
+- A corrected result/deadline can generate a new versioned confirmation message if the state again requires confirmation.
 
 ## 12. Discord message idempotency
 
@@ -250,7 +259,8 @@ Verify registered commands:
 - Completed/forfeit match queues one result announcement.
 - Completed bracket queues one winner announcement.
 - Winner job is cancelled if the bracket is reopened before delivery.
-- Repeated scheduler runs do not duplicate active trigger jobs.
+- Repeated scheduler runs with unchanged message content do not duplicate active trigger jobs.
+- A corrected match result or corrected completed winner can generate a fresh versioned announcement when the resulting outbound content changes.
 - Visibility/status changes after queueing cancel stale announcement.
 
 ## 15. Temporary match channels
@@ -260,6 +270,9 @@ Verify registered commands:
 - Bot has explicit overwrite and can manage/post despite everyone deny.
 - Match participants can view/send/read history.
 - Team membership uses saved event roster snapshot.
+- Primary host receives access.
+- Accepted, unexpired FULL/BRACKET/SCOREKEEPER co-hosts receive access.
+- Announcement-only/view-only co-hosts do not receive access.
 - Topic contains `gnt-match:<match-id>`.
 - Intro identifies event/round/match/entrants and Match Center link.
 - Mapping is persisted ACTIVE.
@@ -322,7 +335,8 @@ After successful REMOVE verify that exact row becomes REMOVED with `removed_at` 
 - ADD job cancels if configured role changed before claim.
 - REMOVE job only executes for an ACTIVE tracked assignment.
 - Role operations never guess removal from current settings alone.
-- Removed/missing Discord role permission fails safely without changing tournament records.
+- Missing/deleted member or role during a REMOVE is treated as successful cleanup of the tracked managed state.
+- Removed/missing Discord role permission for an ADD fails safely without changing tournament records.
 
 ## 17. Worker failure isolation
 
@@ -347,15 +361,28 @@ Deliberately remove Discord permissions and verify:
 - Current route exposes `aria-current="page"` plus visible non-color-only indicator.
 - Reduced-motion preference disables added v1.0 UI motion.
 - Form labels are associated with inputs.
+- At phone width, player and team leaderboards render as readable cards with Rank/identity plus labeled Record, Win rate, Titles, Best streak, and Events stats.
+- Phone leaderboards do not require horizontal scrolling to read the main stats.
+- Leaderboard filter controls collapse to one column and the Apply button is full width on narrow screens.
 
-## 19. CI/release gate
+## 19. Help/discoverability
+
+- `/help/discord-bot` loads without authentication and clearly states the bot is optional.
+- Walkthrough explains that workspace DM support and individual user DM opt-in are separate controls.
+- Walkthrough links users back to dashboard/help appropriately.
+- Bot Settings setup card links to the walkthrough.
+- Main `/help` page surfaces a Discord bot beta card, feature-guide entry, and start-link.
+
+## 20. CI/release gate
 
 PR regression workflow must pass on the **exact final head**:
 
-1. Regression smoke tests.
-2. `node --check bot-worker/index.mjs`.
-3. `npm run typecheck`.
-4. `npm run build`.
+1. `npm audit --omit=dev --audit-level=high`.
+2. Existing regression smoke tests.
+3. `node tests/v100-bot-schema-smoke.cjs`.
+4. `node --check bot-worker/index.mjs`.
+5. `npm run typecheck`.
+6. `npm run build`.
 
 Only mark PR ready when:
 
