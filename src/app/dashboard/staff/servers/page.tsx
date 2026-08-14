@@ -49,7 +49,7 @@ export default async function StaffServersPage({ searchParams }: { searchParams:
     <div className="section-stack">
       <section className="page-heading">
         <div><span className="eyebrow">Platform administration</span><h1>Server profiles</h1><p>Open any registered server profile to correct branding, links, games, webhooks, access roles, or owner Discord IDs.</p></div>
-        <Link className="button button-secondary" href="/dashboard/staff">Back to staff dashboard</Link>
+        <div className="button-row"><Link className="button button-secondary" href="/dashboard/staff">Back to staff dashboard</Link><Link className="button button-secondary" href="/dashboard/staff/teams">Team profiles</Link></div>
       </section>
 
       <form className="staff-user-search" method="get">
