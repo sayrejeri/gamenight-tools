@@ -239,9 +239,13 @@ async function reportWithRetry(jobId, success, error = null, result = null) {
 async function runSchedulerIfDue() {
   const now = Date.now();
   if (now - lastScheduleAt < SCHEDULE_MS) return;
-  const result = await websiteRequest("/api/internal/bot/schedule", { workerId: WORKER_ID });
+  const [scheduleResult, roleResult] = await Promise.all([
+    websiteRequest("/api/internal/bot/schedule", { workerId: WORKER_ID }),
+    websiteRequest("/api/internal/bot/roles/reconcile", { workerId: WORKER_ID }),
+  ]);
   lastScheduleAt = now;
-  if (result.queued) console.log(`[scheduler] queued ${result.queued} bot job(s)`);
+  const queued = Number(scheduleResult.queued || 0) + Number(roleResult.queued || 0);
+  if (queued) console.log(`[scheduler] queued ${queued} bot job(s) (${Number(roleResult.queued || 0)} role cleanup)`);
 }
 
 async function runOnce() {
