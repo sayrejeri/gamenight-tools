@@ -2,7 +2,7 @@
 
 This plan is the focused release gate for **Platform Polish & Discord Bot Beta**.
 
-Do not mark v1.0 ready for review until the exact final branch head passes regression checks, TypeScript typecheck, production build, and the applicable manual checks below.
+Do not mark v1.0 ready for review until the exact final branch head passes regression smoke tests, Four Seasons worker syntax validation, TypeScript typecheck, production build, and the applicable manual checks below.
 
 ## 1. Baseline regression
 
@@ -30,9 +30,12 @@ discord_bot_workers
 discord_match_channels
 ```
 
-Verify migration 011 is not rerun after success.
+Verify:
 
-Verify existing `workspaces.bot_connected` data remains intact.
+- `discord_bot_jobs.match_id` exists and references `bracket_matches(id)`.
+- Match-job index exists for `match_id`, job type, and status.
+- Migration 011 is not rerun after success.
+- Existing `workspaces.bot_connected` data remains intact.
 
 ## 3. Platform profile administration
 
@@ -41,7 +44,7 @@ Verify existing `workspaces.bot_connected` data remains intact.
 - Platform Owner can open Staff Dashboard → Team profiles.
 - Platform Admin with default permissions can open Team profiles.
 - A staff member granted **Manage Team Profiles** can open/edit teams even if their title is not Owner/Admin.
-- A staff member denied **Manage Team Profiles** cannot open the team administration pages or PATCH the staff team endpoint.
+- A staff member denied **Manage Team Profiles** cannot open team administration pages or PATCH the staff team endpoint.
 - Search matches team name, tag, slug, and game.
 - Status filtering works.
 - Staff can edit name/tag, description, logo/banner, platform/game, region, recruiting status, profile status, verification, chat, and suggestions.
@@ -62,11 +65,11 @@ Verify existing `workspaces.bot_connected` data remains intact.
 - Verified game identity badge displays only when at least one displayed identity is verified/resolved.
 - Team Owner badge only derives from approved visible team ownership.
 - Server Owner badge only derives from approved visible server ownership.
-- Badges are compact and do not replace normal profile content.
-- Mouse hover shows badge label/description.
-- Keyboard focus exposes the same badge information.
-- Mobile layout does not overflow when multiple badges are shown.
-- Users cannot award themselves any of these derived badges.
+- Earned competitive badges appear only when event-history privacy permits them.
+- Tournament Champion/Dynasty/On Fire/Tournament Veteran/Battle Tested/Reliable/Perfect Tournament still derive from competitive history rather than self-selection.
+- Mouse hover and keyboard focus expose badge label/description.
+- Phone-width focus/hover description remains visible and does not overflow.
+- Reduced-motion preference removes badge tooltip animation.
 
 ## 5. Discord application setup
 
@@ -79,22 +82,24 @@ DISCORD_PUBLIC_KEY
 BOT_WORKER_SECRET
 ```
 
+Verify:
+
 - Bot token is never exposed in rendered HTML, API responses, logs, or Git history.
-- `BOT_WORKER_SECRET` is different from `AUTH_SECRET` and `CODE_PEPPER`.
-- Discord Interactions Endpoint URL accepts Discord's signed PING and rejects an invalid signature.
+- `BOT_WORKER_SECRET` differs from `AUTH_SECRET` and `CODE_PEPPER`.
+- Discord Interactions Endpoint accepts the signed PING and rejects an invalid signature.
 - Restarting the website after environment changes succeeds.
 
 ## 6. Bot installation and connection
 
 - Workspace manager with **Manage Server Profile** can see Bot Settings.
-- User without that permission cannot open Bot Settings or bot configuration APIs.
+- User without that permission cannot open Bot Settings or bot configuration/queue APIs.
 - Install URL is locked to the workspace Discord guild.
-- Bot can be installed successfully.
+- Bot installs successfully.
 - **Check connection** changes the website to Connected after install.
 - Removing the bot then checking again changes it to Not connected.
 - Connection-state changes write audit entries.
 - Successful connection check registers current guild slash commands.
-- Bot connection can succeed while command-registration failure is surfaced as a warning rather than corrupting workspace state.
+- Command-registration failure can be surfaced without corrupting workspace connection state.
 
 ## 7. Workspace bot settings
 
@@ -111,11 +116,20 @@ Verify:
 - Match category ID validates as a Discord snowflake or blank.
 - Competitor role ID validates as a Discord snowflake or blank.
 - Champion role ID validates as a Discord snowflake or blank.
-- Settings persist after refresh.
-- Setting changes write audit entries.
-- Enabling temporary match channels without a category does not queue create-channel jobs.
-- Enabling announcements without a channel does not queue announcement jobs.
-- Enabling role sync without the corresponding configured role does not queue that role job.
+- Settings persist after refresh and write audit entries.
+- Missing category prevents create-channel jobs.
+- Missing announcement channel prevents announcement jobs.
+- Missing configured role prevents the corresponding role-sync job.
+
+### Delivery-time setting changes
+
+Queue a job, then change settings before Four Seasons claims it:
+
+- Disable server DMs → queued DM becomes CANCELLED rather than delivered.
+- Disable announcements → queued announcement becomes CANCELLED.
+- Disable role sync → queued role job becomes CANCELLED.
+- Disable temporary match-channel creation → queued create-channel job becomes CANCELLED.
+- Existing temporary-channel cleanup remains deliverable even when creation is disabled.
 
 ## 8. User Discord DM preferences
 
@@ -129,9 +143,9 @@ Verify:
 - Main opt-in persists.
 - Each reminder category persists independently.
 - Preferences write an audit entry.
-- Turning main opt-in OFF prevents all new DM jobs for that user.
-- Turning one category OFF prevents only that category.
-- Discord privacy blocking the bot creates a failed delivery state without repeatedly spamming the user.
+- Turning main opt-in/category OFF prevents future jobs of that type.
+- **After a DM job is already queued**, turning the main toggle or relevant category OFF causes the claim-time safety check to CANCEL it.
+- Discord privacy blocking the bot creates a failed delivery state without repeated spam.
 
 ## 9. Four Seasons worker
 
@@ -144,32 +158,49 @@ DISCORD_BOT_TOKEN
 BOT_WORKER_ID
 BOT_WORKER_VERSION
 BOT_POLL_SECONDS
+BOT_CLAIM_LIMIT=1
 BOT_SCHEDULE_SECONDS
 ```
 
 Verify:
 
 - Worker starts on Node.js 20.9+ with `npm start`.
-- Worker does not receive `DATABASE_URL`, `AUTH_SECRET`, or `DISCORD_CLIENT_SECRET`.
-- Wrong `BOT_WORKER_SECRET` receives 401 from internal worker APIs.
+- `node --check bot-worker/index.mjs` succeeds.
+- Worker does not receive `DATABASE_URL`, `AUTH_SECRET`, `CODE_PEPPER`, or `DISCORD_CLIENT_SECRET`.
+- Wrong `BOT_WORKER_SECRET` receives 401 from internal APIs.
 - Correct secret can schedule/claim/report jobs.
+- Recommended claim limit is 1 and the startup log reports it.
+- Website requests stop after roughly 15 seconds if unreachable.
+- Discord requests stop after roughly 20 seconds if unreachable.
 - Bot Settings shows worker online within 90 seconds of heartbeat.
 - Stopping worker eventually shows worker offline.
 - Worker ID/version/last heartbeat display correctly.
-- Queue pending/processing and failed counts display for the workspace.
 
-## 10. Queue reliability
+## 10. Queue reliability and controls
 
-- Scheduler can safely run once per minute without duplicate user messages.
-- Unique dedupe keys prevent the same trigger from being queued repeatedly.
-- Claim moves due jobs PENDING → PROCESSING and increments attempts.
+- Scheduler can safely run once per minute without duplicate trigger jobs.
+- Unique dedupe keys prevent repeated scheduling for the same trigger.
+- Match-related jobs persist their real `match_id`.
+- Claim revalidates current settings/privacy/event/match/role state before PROCESSING.
+- Invalid/stale jobs move PENDING → CANCELLED with a useful reason.
+- Valid claim moves PENDING → PROCESSING and increments attempts.
 - Successful report moves PROCESSING → SENT.
 - Retryable failure requeues after the retry delay.
-- Permanent 400/401/403/404 Discord failures do not retry forever.
+- Permanent Discord 400/401/403/404 failures do not retry forever.
 - Job stops retrying after five attempts.
-- PROCESSING lock older than 10 minutes is recovered.
-- Event deletion/cascade does not leave invalid queued foreign keys.
+- PROCESSING lock older than **2 minutes** is recovered.
+- Event/match deletion cascades do not leave invalid queued foreign keys.
 - Worker outage leaves due jobs waiting instead of losing them.
+
+### Workspace queue controls
+
+- Bot Settings displays recent job type/status/attempt count/error without payload contents.
+- **Retry failed** requires Manage Server Profile permission.
+- Retry resets FAILED jobs to PENDING/attempt 0/current schedule.
+- Retried jobs still go through delivery-time revalidation.
+- **Cancel queued** requires confirmation and only changes PENDING jobs.
+- Manual cancel does not mutate an already PROCESSING job.
+- Retry/cancel actions write audit entries with affected counts.
 
 ## 11. DM reminder scheduler
 
@@ -179,30 +210,41 @@ Use test events/matches with short times where practical.
 
 - Approved participant with DM/event reminders enabled receives one reminder around the 24-hour window.
 - Non-approved/rejected/withdrawn participant does not receive it.
-- Same scheduler trigger does not send duplicates.
+- If participation/event state changes after queueing, delivery-time validation cancels the stale job.
 
 ### Check-in reminder
 
 - Approved participant who has not checked in receives one reminder after check-in opens.
 - Already checked-in participant does not receive it.
-- Link opens the correct Game Night Tools event.
+- If participant checks in after queueing but before delivery, queued reminder is cancelled.
+- Link opens the correct event.
 
 ### Match reminder
 
 - Scheduled match roughly 20–40 minutes away queues a match reminder.
 - Link opens `/dashboard/events/{eventId}/matches`.
-- Solo participants are included.
-- Team competition authority/reminders still use the saved event roster snapshot where applicable.
+- If the match is completed/rescheduled outside the delivery window before claim, stale reminder is cancelled.
 
 ### Result confirmation
 
 - Non-submitting opponent receives a result-confirmation reminder while match is awaiting confirmation.
 - Submitter does not receive their own confirmation reminder.
+- If result becomes confirmed/disputed/resolved before delivery, stale confirmation DM is cancelled.
 - Link opens the Series Desk.
 
-## 12. Discord slash commands
+## 12. Discord message idempotency
 
-After Check connection, verify these exist for the guild:
+Test DMs and announcements with a controlled worker/report interruption:
+
+- Outbound message carries a job-derived Discord nonce with nonce enforcement.
+- A quick retry of the same job does not create a second message when Discord still recognizes the nonce.
+- A Discord success followed by a failed website success-report is logged as a success-report failure, not deliberately reported back as a Discord delivery failure.
+- Success-report callback retries up to three times.
+- After stale-lock recovery, retry remains safe/idempotent.
+
+## 13. Discord slash commands
+
+After Check connection, verify:
 
 ```text
 /gnt status
@@ -212,94 +254,112 @@ After Check connection, verify these exist for the guild:
 /gnt leaderboard
 ```
 
-- Responses are ephemeral during beta.
-- `/gnt status` reports connected workspace and upcoming event count.
-- `/gnt events` returns up to five SERVER/PUBLIC upcoming events and valid links.
-- `/gnt matches` returns active/upcoming competition matches without exposing hidden/draft events.
-- `/gnt bracket` links directly to `/dashboard/events/{eventId}/bracket`.
-- `/gnt leaderboard` defaults to public player rankings.
-- `/gnt leaderboard type:Teams` returns public team rankings.
+- Valid guild commands immediately receive a deferred ephemeral acknowledgment.
+- Artificially delay command database work beyond 3 seconds; Discord still receives the finished edited response.
+- Deferred error path edits the original response with a safe generic error.
+- `/gnt status` reports connected workspace/upcoming count.
+- `/gnt events` returns up to five SERVER/PUBLIC events and valid links.
+- `/gnt matches` does not expose hidden/draft events.
+- `/gnt bracket` links to `/dashboard/events/{eventId}/bracket`.
+- `/gnt leaderboard` defaults to public players.
+- `type:Teams` returns public team rankings.
 - Leaderboards do not expose private profile/event competitive history.
-- Command used in an unrelated/unregistered guild gets a safe not-connected response.
+- Unregistered guild gets a safe not-connected response.
 
-## 13. Discord announcements
+## 14. Discord announcements
 
-With announcements enabled and a valid channel:
-
-- Recently published SERVER/PUBLIC event queues one event announcement.
-- Private/staff/code-only/unlisted event is not announced by the public/server announcement scheduler.
+- Recently published SERVER/PUBLIC event queues one announcement.
+- Private/staff/code-only/unlisted event is not announced.
 - Match READY/LIVE queues one match-ready announcement.
 - Completed/forfeit match queues one result announcement naming the winner.
 - Completed bracket queues one tournament-winner announcement.
-- Repeated scheduler runs do not duplicate the same announcement.
-- Deleted/missing announcement channel fails safely and does not alter the event/bracket.
+- Repeated scheduler runs do not duplicate the trigger job.
+- If event visibility/status changes after queueing, claim-time validation cancels stale announcement.
+- Deleted/missing announcement channel fails safely and does not alter event/bracket state.
 
-## 14. Temporary match channels
+## 15. Temporary match channels
 
-With temporary match channels enabled and a configured category:
+With the feature enabled and a configured category:
 
 - READY/LIVE match creates one Discord text channel.
-- Channel is placed in the configured category.
+- Channel is placed in configured category.
 - `@everyone` cannot view it.
+- Bot has its own explicit overwrite and can post/manage despite the everyone deny.
 - Match participants can view/send/read history.
-- Team tournament channel membership uses the saved event roster snapshot, not the team's current live roster.
-- Intro message identifies event, round/match, entrants, and Match Center link.
-- `discord_match_channels` stores the match/channel mapping as ACTIVE after successful creation.
-- Scheduler does not create another ACTIVE channel for the same match.
-- COMPLETED/FORFEIT match queues channel deletion.
-- Completed/cancelled event or completed bracket also cleans remaining channels.
-- Successful deletion marks mapping DELETED.
-- Already-deleted Discord channel (404) is treated as successful cleanup.
-- Turning off creation after channels exist does not block cleanup of existing channels.
+- Team membership uses saved event roster snapshot, not current team roster.
+- Topic contains the hidden `gnt-match:<match-id>` marker.
+- Intro message identifies event/round/match/entrants and Match Center link.
+- `discord_match_channels` stores mapping ACTIVE after success.
 
-## 15. Role synchronization
+### Creation race/idempotency
+
+- While one CREATE_MATCH_CHANNEL job is PENDING/PROCESSING, scheduler cannot queue another for the same match.
+- Simulate Discord creating the channel but the website report failing; retry discovers/reuses the topic-marked existing channel instead of creating a duplicate.
+- If a match is later reopened after the old channel is cleaned/deleted, a new channel can be created when appropriate.
+
+### Cleanup
+
+- COMPLETED/FORFEIT match queues deletion.
+- Completed/cancelled event or completed bracket cleans remaining channels.
+- Successful deletion marks mapping DELETED.
+- Already-deleted Discord channel (404) counts as successful cleanup.
+- Turning off creation after channels exist does not block cleanup.
+
+## 16. Role synchronization
 
 ### Competitor role
 
-- Approved direct participant in an active event receives configured competitor role.
-- Registered team-entry roster snapshot members receive competitor role.
-- Completing/cancelling an event removes competitor role only when the user has no other active competition in that same workspace.
-- POSTPONED active competition prevents premature role removal.
-- Removed/missing role permission fails safely without changing event state.
+- Approved direct participant in active event receives competitor role.
+- Registered team-entry snapshot members receive competitor role.
+- Completing/cancelling an event removes role only when user has no other active competition in the workspace.
+- POSTPONED competition prevents premature removal.
+- If eligibility changes after queueing, claim-time validation cancels stale ADD/REMOVE.
+- Removed/missing role permission fails safely.
 
 ### Champion role
 
-- Direct-player champion receives configured champion role after bracket completion.
-- Team champion's saved event roster snapshot members receive champion role.
+- Direct-player champion receives champion role after bracket completion.
+- Team champion snapshot members receive champion role.
+- If bracket/champion state no longer supports the queued award before delivery, the job is cancelled.
 - Repeated scheduler passes do not duplicate role jobs.
 
-## 16. Worker failure isolation
+## 17. Worker failure isolation
 
-Test with bot permissions deliberately removed:
+Deliberately remove Discord permissions and verify:
 
 - DM failure does not change signup/check-in/match state.
 - Announcement failure does not change event status.
-- Match-channel failure does not change match status or winner advancement.
+- Match-channel failure does not change match status or advancement.
 - Role-sync failure does not change participant/team/champion records.
-- Failure appears in queue health and can be diagnosed from job error state.
+- Failure appears in queue health/recent jobs.
+- Worker continues polling after individual failures.
+- A hung network request times out rather than holding the worker indefinitely.
 
-## 17. Mobile/accessibility pass
-
-Before release:
+## 18. Mobile/accessibility/navigation
 
 - Staff Team Profiles pages work at phone width.
-- Bot Settings cards/forms do not overflow.
+- Bot Settings cards/forms/recent-job rows do not overflow.
 - Worker health stat cards wrap correctly.
-- Public badge strip wraps correctly.
-- Keyboard navigation works for badge descriptions, forms, buttons, and bot actions.
+- Retry/cancel controls remain usable with touch and keyboard.
+- Public badge strip wraps correctly and badge descriptions remain accessible on mobile/focus.
+- Mobile hamburger contains Home, Events, Servers, Teams, Leaderboards, Community, Suggestions, Tools, and Search.
+- Current mobile navigation route exposes `aria-current="page"` and a visible non-color-only indicator.
+- Reduced-motion preferences disable added v1.0 UI motion.
 - Form labels are associated with inputs.
-- Important status is not communicated only through color.
 
-## 18. Final release gate
+## 19. CI/release gate
 
-Only mark PR ready for review when:
+PR regression workflow must include and pass:
 
-1. Exact final branch head has green **PR regression checks**.
-2. Smoke tests pass.
-3. TypeScript typecheck passes.
-4. Production build passes.
-5. Migration 011 succeeds on a backup/staging database.
-6. Website-only operation is still healthy with bot/worker disabled.
-7. Four Seasons worker completes heartbeat, queue, DM/announcement, temporary-channel, and role-sync smoke checks.
-8. Discord slash-command endpoint is verified in Developer Portal.
-9. No unresolved genuine release-blocking review findings remain.
+1. Regression smoke tests.
+2. `node --check bot-worker/index.mjs`.
+3. `npm run typecheck`.
+4. `npm run build`.
+
+Only mark PR ready for review when the **exact final branch head** is green and:
+
+- migration 011 succeeds on backup/staging DB;
+- website-only operation is healthy with bot/worker disabled;
+- Four Seasons completes heartbeat, queue, DM/announcement, temporary-channel, role-sync, and recovery smoke checks;
+- Discord slash-command endpoint is verified in Developer Portal;
+- no unresolved genuine release-blocking review findings remain.
