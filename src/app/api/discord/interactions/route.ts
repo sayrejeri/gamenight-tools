@@ -145,7 +145,7 @@ async function buildCommandResponse(interaction: DiscordInteraction): Promise<st
       const rows = (await loadTeamLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
       if (!rows.length) return `**${workspace.name}** does not have enough public completed team competition history for a leaderboard yet.`;
       const lines = rows.map((row, index) => `${index + 1}. **${row.name}** — ${row.wins}-${row.losses} · ${row.championships} title${row.championships === 1 ? "" : "s"}`);
-      return `**${workspace.name} public team leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}&type=teams`;
+      return `**${workspace.name} public team leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}&mode=teams`;
     }
     const rows = (await loadPlayerLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
     if (!rows.length) return `**${workspace.name}** does not have enough public completed player competition history for a leaderboard yet.`;
