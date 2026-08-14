@@ -20,11 +20,21 @@ type JobRow = RowDataPacket & {
 
 export async function POST(request: NextRequest) {
   if (!isAuthorizedBotWorker(request)) return NextResponse.json({ error: "Unauthorized worker." }, { status: 401 });
-  const body = await request.json().catch(() => ({})) as { workerId?: string; limit?: number };
+  const body = await request.json().catch(() => ({})) as { workerId?: string; workerVersion?: string; metadata?: unknown; limit?: number };
   const workerId = typeof body.workerId === "string" && body.workerId.trim() ? body.workerId.trim().slice(0, 120) : "four-seasons-worker";
+  const workerVersion = typeof body.workerVersion === "string" && body.workerVersion.trim() ? body.workerVersion.trim().slice(0, 40) : null;
+  const metadataJson = body.metadata === undefined ? null : JSON.stringify(body.metadata).slice(0, 4000);
   const limit = Math.max(1, Math.min(20, Number(body.limit) || 10));
 
   const jobs = await withTransaction(async (connection) => {
+    await connection.execute(
+      `INSERT INTO discord_bot_workers (worker_id, version, metadata_json, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+       ON DUPLICATE KEY UPDATE
+         version = VALUES(version), metadata_json = VALUES(metadata_json), last_seen_at = CURRENT_TIMESTAMP(3)`,
+      [workerId, workerVersion, metadataJson],
+    );
+
     await connection.execute(
       `UPDATE discord_bot_jobs
        SET status = CASE WHEN attempts >= 5 THEN 'FAILED' ELSE 'PENDING' END,
@@ -59,6 +69,7 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({
+    workerId,
     jobs: jobs.map((job) => {
       let payload: unknown = null;
       if (job.payload_json) {
