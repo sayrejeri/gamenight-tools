@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { query } from "@/lib/db";
 import { verifyDiscordInteractionSignature } from "@/lib/discord-bot";
@@ -12,6 +12,8 @@ type DiscordOption = {
 };
 type DiscordInteraction = {
   type: number;
+  application_id?: string;
+  token?: string;
   guild_id?: string;
   data?: {
     name?: string;
@@ -47,6 +49,10 @@ function interactionMessage(content: string, ephemeral = true) {
   });
 }
 
+function deferredEphemeralResponse() {
+  return NextResponse.json({ type: 5, data: { flags: 64 } });
+}
+
 function appUrl(): string {
   return (process.env.APP_URL?.trim() || "https://gamenights.sayrejeri.com").replace(/\/$/, "");
 }
@@ -55,22 +61,8 @@ function discordTime(value: Date | null) {
   return value ? `<t:${Math.floor(new Date(value).getTime() / 1000)}:F>` : "Time TBA";
 }
 
-export async function POST(request: Request) {
-  const rawBody = await request.text();
-  const signature = request.headers.get("x-signature-ed25519");
-  const timestamp = request.headers.get("x-signature-timestamp");
-  if (!verifyDiscordInteractionSignature(rawBody, signature, timestamp)) {
-    return NextResponse.json({ error: "Invalid Discord interaction signature." }, { status: 401 });
-  }
-
-  let interaction: DiscordInteraction;
-  try { interaction = JSON.parse(rawBody) as DiscordInteraction; }
-  catch { return NextResponse.json({ error: "Invalid interaction payload." }, { status: 400 }); }
-
-  // Discord verifies interaction endpoints with a PING before accepting the URL.
-  if (interaction.type === 1) return NextResponse.json({ type: 1 });
-  if (interaction.type !== 2 || interaction.data?.name !== "gnt") return interactionMessage("That Game Night Tools command is not supported by this beta yet.");
-  if (!interaction.guild_id) return interactionMessage("Game Night Tools server commands can only be used inside a Discord server.");
+async function buildCommandResponse(interaction: DiscordInteraction): Promise<string> {
+  if (!interaction.guild_id) return "Game Night Tools server commands can only be used inside a Discord server.";
 
   const workspaces = await query<WorkspaceRow[]>(
     `SELECT id, name, discord_guild_id FROM workspaces
@@ -79,9 +71,9 @@ export async function POST(request: Request) {
     [interaction.guild_id],
   );
   const workspace = workspaces[0];
-  if (!workspace) return interactionMessage("This Discord server is not connected to an approved Game Night Tools server profile yet.");
+  if (!workspace) return "This Discord server is not connected to an approved Game Night Tools server profile yet.";
 
-  const command = interaction.data.options?.[0];
+  const command = interaction.data?.options?.[0];
   const subcommand = command?.name ?? "status";
   const baseUrl = appUrl();
 
@@ -95,10 +87,10 @@ export async function POST(request: Request) {
        LIMIT 5`,
       [workspace.id],
     );
-    if (!events.length) return interactionMessage(`**${workspace.name}** has no upcoming published events right now.\n${baseUrl}/dashboard/workspaces/${workspace.id}`);
+    if (!events.length) return `**${workspace.name}** has no upcoming published events right now.\n${baseUrl}/dashboard/workspaces/${workspace.id}`;
 
     const lines = events.map((event) => `• **${event.name}** — ${discordTime(event.starts_at)} · ${event.status.replaceAll("_", " ").toLowerCase()}\n  ${baseUrl}/dashboard/events/${event.id}`);
-    return interactionMessage(`**Upcoming ${workspace.name} events**\n${lines.join("\n")}`);
+    return `**Upcoming ${workspace.name} events**\n${lines.join("\n")}`;
   }
 
   if (subcommand === "matches") {
@@ -121,13 +113,13 @@ export async function POST(request: Request) {
        LIMIT 5`,
       [workspace.id],
     );
-    if (!matches.length) return interactionMessage(`**${workspace.name}** has no active or scheduled tournament matches right now.`);
+    if (!matches.length) return `**${workspace.name}** has no active or scheduled tournament matches right now.`;
     const lines = matches.map((match) => {
       const players = [match.a_name, match.b_name, match.c_name].filter(Boolean).join(" vs ") || "Entrants TBA";
       const when = match.scheduled_at ? ` · ${discordTime(match.scheduled_at)}` : "";
       return `• **${match.event_name}** R${match.round_number} M${match.match_number} — ${players}\n  ${match.status.replaceAll("_", " ").toLowerCase()}${when}`;
     });
-    return interactionMessage(`**${workspace.name} tournament matches**\n${lines.join("\n")}`);
+    return `**${workspace.name} tournament matches**\n${lines.join("\n")}`;
   }
 
   if (subcommand === "bracket") {
@@ -142,8 +134,8 @@ export async function POST(request: Request) {
       [workspace.id],
     );
     const bracket = brackets[0];
-    if (!bracket) return interactionMessage(`**${workspace.name}** does not have a generated competition to show right now.`);
-    return interactionMessage(`🏆 **${bracket.event_name}**\n${bracket.format.replaceAll("_", " ").toLowerCase()} · ${bracket.bracket_status.toLowerCase()}\n${baseUrl}/dashboard/events/${bracket.event_id}/bracket`);
+    if (!bracket) return `**${workspace.name}** does not have a generated competition to show right now.`;
+    return `🏆 **${bracket.event_name}**\n${bracket.format.replaceAll("_", " ").toLowerCase()} · ${bracket.bracket_status.toLowerCase()}\n${baseUrl}/dashboard/events/${bracket.event_id}/bracket`;
   }
 
   if (subcommand === "leaderboard") {
@@ -151,14 +143,14 @@ export async function POST(request: Request) {
     const leaderboardType = typeOption === "teams" ? "teams" : "players";
     if (leaderboardType === "teams") {
       const rows = (await loadTeamLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
-      if (!rows.length) return interactionMessage(`**${workspace.name}** does not have enough public completed team competition history for a leaderboard yet.`);
+      if (!rows.length) return `**${workspace.name}** does not have enough public completed team competition history for a leaderboard yet.`;
       const lines = rows.map((row, index) => `${index + 1}. **${row.name}** — ${row.wins}-${row.losses} · ${row.championships} title${row.championships === 1 ? "" : "s"}`);
-      return interactionMessage(`**${workspace.name} public team leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}&type=teams`);
+      return `**${workspace.name} public team leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}&type=teams`;
     }
     const rows = (await loadPlayerLeaderboard({ workspaceId: workspace.id, publicOnly: true })).slice(0, 5);
-    if (!rows.length) return interactionMessage(`**${workspace.name}** does not have enough public completed player competition history for a leaderboard yet.`);
+    if (!rows.length) return `**${workspace.name}** does not have enough public completed player competition history for a leaderboard yet.`;
     const lines = rows.map((row, index) => `${index + 1}. **${row.displayName}** — ${row.wins}-${row.losses} · ${row.championships} title${row.championships === 1 ? "" : "s"}`);
-    return interactionMessage(`**${workspace.name} public player leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}`);
+    return `**${workspace.name} public player leaderboard**\n${lines.join("\n")}\n${baseUrl}/dashboard/leaderboards?workspace=${encodeURIComponent(workspace.id)}`;
   }
 
   const counts = await query<CountRow[]>(
@@ -169,5 +161,54 @@ export async function POST(request: Request) {
     [workspace.id],
   );
   const upcoming = Number(counts[0]?.total ?? 0);
-  return interactionMessage(`✅ **${workspace.name}** is connected to the Game Night Tools bot beta.\nUpcoming published events: **${upcoming}**\nCommands: \`/gnt events\`, \`/gnt matches\`, \`/gnt bracket\`, \`/gnt leaderboard\`\n${baseUrl}/dashboard/workspaces/${workspace.id}`);
+  return `✅ **${workspace.name}** is connected to the Game Night Tools bot beta.\nUpcoming published events: **${upcoming}**\nCommands: \`/gnt events\`, \`/gnt matches\`, \`/gnt bracket\`, \`/gnt leaderboard\`\n${baseUrl}/dashboard/workspaces/${workspace.id}`;
+}
+
+async function editDeferredResponse(interaction: DiscordInteraction, content: string): Promise<void> {
+  if (!interaction.application_id || !interaction.token) return;
+  const response = await fetch(`https://discord.com/api/v10/webhooks/${encodeURIComponent(interaction.application_id)}/${encodeURIComponent(interaction.token)}/messages/@original`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: content.slice(0, 1950), allowed_mentions: { parse: [] } }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Discord deferred interaction response failed with status ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
+  }
+}
+
+export async function POST(request: Request) {
+  const rawBody = await request.text();
+  const signature = request.headers.get("x-signature-ed25519");
+  const timestamp = request.headers.get("x-signature-timestamp");
+  if (!verifyDiscordInteractionSignature(rawBody, signature, timestamp)) {
+    return NextResponse.json({ error: "Invalid Discord interaction signature." }, { status: 401 });
+  }
+
+  let interaction: DiscordInteraction;
+  try { interaction = JSON.parse(rawBody) as DiscordInteraction; }
+  catch { return NextResponse.json({ error: "Invalid interaction payload." }, { status: 400 }); }
+
+  // Discord verifies interaction endpoints with a PING before accepting the URL.
+  if (interaction.type === 1) return NextResponse.json({ type: 1 });
+  if (interaction.type !== 2 || interaction.data?.name !== "gnt") return interactionMessage("That Game Night Tools command is not supported by this beta yet.");
+  if (!interaction.guild_id) return interactionMessage("Game Night Tools server commands can only be used inside a Discord server.");
+  if (!interaction.application_id || !interaction.token) return interactionMessage("Discord did not provide enough information to complete this command.");
+
+  after(async () => {
+    try {
+      const content = await buildCommandResponse(interaction);
+      await editDeferredResponse(interaction, content);
+    } catch (error) {
+      console.error("Discord command processing failed:", error);
+      try {
+        await editDeferredResponse(interaction, "Game Night Tools could not finish that command. Please try again in a moment.");
+      } catch (editError) {
+        console.error("Discord command error response failed:", editError);
+      }
+    }
+  });
+
+  return deferredEphemeralResponse();
 }
