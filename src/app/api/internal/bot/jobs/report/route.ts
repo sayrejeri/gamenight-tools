@@ -111,6 +111,15 @@ export async function POST(request: NextRequest) {
              WHERE workspace_id = ? AND user_id = ? AND role_kind = ? AND role_id = ? AND status = 'ACTIVE'`,
             [current.workspace_id, current.user_id, current.role_kind, current.discord_role_id],
           );
+          // Once a tracked role is removed, completed/cancelled dedupe keys for that
+          // exact role can be released so a later event/config cycle can add it again.
+          await connection.execute(
+            `UPDATE discord_bot_jobs
+             SET dedupe_key = NULL
+             WHERE workspace_id = ? AND user_id = ? AND role_kind = ? AND discord_role_id = ?
+               AND id <> ? AND status IN ('SENT','CANCELLED')`,
+            [current.workspace_id, current.user_id, current.role_kind, current.discord_role_id, parsed.data.jobId],
+          );
         }
         await connection.execute(
           `UPDATE discord_bot_jobs
