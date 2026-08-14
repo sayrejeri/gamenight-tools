@@ -22,6 +22,7 @@ type SettingsRow = RowDataPacket & {
 };
 type WorkerRow = RowDataPacket & { worker_id: string; version: string | null; last_seen_at: Date };
 type QueueRow = RowDataPacket & { pending_count: number; processing_count: number; failed_count: number };
+type ManagedStateRow = RowDataPacket & { active_match_channels: number; active_role_assignments: number };
 type JobActivityRow = RowDataPacket & {
   id: string;
   job_type: string;
@@ -37,7 +38,7 @@ export default async function WorkspaceBotPage({ params }: { params: Promise<{ w
   const { workspaceId } = await params;
   if (!await hasWorkspacePermission(session.userId, workspaceId, "MANAGE_SERVER_PROFILE")) notFound();
 
-  const [workspaces, settingsRows, workerRows, queueRows, recentJobs] = await Promise.all([
+  const [workspaces, settingsRows, workerRows, queueRows, managedStateRows, recentJobs] = await Promise.all([
     query<WorkspaceRow[]>(`SELECT id, name, discord_guild_id, bot_connected, profile_status FROM workspaces WHERE id = ? LIMIT 1`, [workspaceId]),
     query<SettingsRow[]>(
       `SELECT dm_reminders_enabled, announcements_enabled, temporary_match_channels_enabled, role_sync_enabled,
@@ -56,6 +57,12 @@ export default async function WorkspaceBotPage({ params }: { params: Promise<{ w
        FROM discord_bot_jobs WHERE workspace_id = ?`,
       [workspaceId],
     ).catch(() => [] as QueueRow[]),
+    query<ManagedStateRow[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM discord_match_channels WHERE workspace_id = ? AND status = 'ACTIVE') AS active_match_channels,
+         (SELECT COUNT(*) FROM discord_role_assignments WHERE workspace_id = ? AND status = 'ACTIVE') AS active_role_assignments`,
+      [workspaceId, workspaceId],
+    ).catch(() => [] as ManagedStateRow[]),
     query<JobActivityRow[]>(
       `SELECT id, job_type, status, attempts, last_error, created_at, completed_at
        FROM discord_bot_jobs WHERE workspace_id = ?
@@ -68,12 +75,15 @@ export default async function WorkspaceBotPage({ params }: { params: Promise<{ w
   const settings = settingsRows[0];
   const worker = workerRows[0];
   const queue = queueRows[0];
+  const managedState = managedStateRows[0];
   const configured = isDiscordBotConfigured();
   const workerLastSeen = worker?.last_seen_at ? new Date(worker.last_seen_at) : null;
   const workerOnline = Boolean(workerLastSeen && Date.now() - workerLastSeen.getTime() <= 90_000);
   const pendingCount = Number(queue?.pending_count ?? 0);
   const processingCount = Number(queue?.processing_count ?? 0);
   const failedCount = Number(queue?.failed_count ?? 0);
+  const activeMatchChannels = Number(managedState?.active_match_channels ?? 0);
+  const activeRoleAssignments = Number(managedState?.active_role_assignments ?? 0);
 
   return (
     <div className="section-stack">
@@ -85,12 +95,14 @@ export default async function WorkspaceBotPage({ params }: { params: Promise<{ w
       <DiscordBotSetupCard workspaceId={workspaceId} configured={configured} connected={Boolean(workspace.bot_connected)} installUrl={buildDiscordBotInstallUrl(workspace.discord_guild_id)} showSettingsLink={false} />
 
       <section className="panel section-stack">
-        <div className="section-header"><div><span className="card-kicker">Background delivery</span><h2>Worker health</h2><p>Discord installation and the Four Seasons background worker are tracked separately.</p></div><span className="badge">{workerOnline ? "Worker online" : worker ? "Worker offline" : "Worker not seen"}</span></div>
+        <div className="section-header"><div><span className="card-kicker">Background delivery</span><h2>Worker health</h2><p>Discord installation, the Four Seasons worker, queue activity, and bot-managed Discord state are tracked separately.</p></div><span className="badge">{workerOnline ? "Worker online" : worker ? "Worker offline" : "Worker not seen"}</span></div>
         <div className="staff-stat-grid">
           <article className="stat-card"><strong>{workerOnline ? "ONLINE" : "OFFLINE"}</strong><span>{worker?.worker_id ?? "No worker heartbeat"}</span></article>
           <article className="stat-card"><strong>{worker?.version ?? "—"}</strong><span>Worker version</span></article>
           <article className="stat-card"><strong>{pendingCount + processingCount}</strong><span>Queued / processing</span></article>
           <article className="stat-card"><strong>{failedCount}</strong><span>Failed jobs</span></article>
+          <article className="stat-card"><strong>{activeMatchChannels}</strong><span>Active match channels</span></article>
+          <article className="stat-card"><strong>{activeRoleAssignments}</strong><span>Managed role assignments</span></article>
         </div>
         <p className="muted">{workerLastSeen ? `Last heartbeat: ${workerLastSeen.toLocaleString()}` : "The website has not received a worker heartbeat yet. Start the Four Seasons worker after the v1.0 website and migration are deployed."}</p>
         <WorkspaceBotQueueActions workspaceId={workspaceId} failedCount={failedCount} pendingCount={pendingCount} />
