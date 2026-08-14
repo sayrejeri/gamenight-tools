@@ -10,9 +10,11 @@ Game Night Tools uses two cooperating pieces:
    - owns the database and permission checks;
    - stores workspace bot settings and user DM opt-ins;
    - verifies bot installation and registers guild slash commands;
+   - validates configured Discord channels/categories/roles before managers enable automation;
    - receives signed Discord HTTP interactions;
    - schedules durable bot jobs;
    - revalidates current settings/privacy/competition state immediately before claim;
+   - resolves current private-match-channel access when Four Seasons creates the channel;
    - tracks worker heartbeat, queue history, temporary match channels, and bot-managed role assignments.
 
 2. **Four Seasons worker** in `bot-worker/`
@@ -99,6 +101,28 @@ The worker requires Node.js 20.9+ and currently has no npm runtime dependencies.
 
 Website requests time out after 15 seconds, Discord requests after 20 seconds, and abandoned PROCESSING locks are recovered after two minutes.
 
+## Discord configuration preflight
+
+Bot Settings includes **Validate Discord configuration**. It uses the values currently typed into the form, so managers can test IDs before saving a bad configuration.
+
+The validator checks:
+
+- the bot can access the connected Discord guild;
+- announcement channel ID belongs to that guild;
+- announcement target is a normal text channel or announcement channel;
+- the bot's **effective** channel permissions include View Channel, Send Messages, Embed Links, and Read Message History after Discord overwrites are applied;
+- match-category ID belongs to the guild and is actually a category;
+- the bot has View Channel and Manage Channels for that category;
+- configured synchronized roles exist in the guild;
+- `@everyone` cannot be used as a competition role;
+- Discord/integration-managed roles are rejected;
+- the bot has Manage Roles;
+- synchronized roles are below the bot's highest role in Discord's hierarchy.
+
+Role sync may intentionally use only a Competitor role or only a Champion role. A missing optional role is a warning rather than a failure; that half of role sync simply remains inactive.
+
+The preflight is convenience, not the final security boundary. Jobs still revalidate current state at delivery time because Discord permissions/settings can change after validation.
+
 ## Worker health and queue controls
 
 Every claim updates the worker heartbeat. Bot Settings shows:
@@ -107,6 +131,8 @@ Every claim updates the worker heartbeat. Bot Settings shows:
 - worker ID/version and last heartbeat;
 - queued/processing count;
 - failed count;
+- active temporary match-channel count;
+- active bot-managed role-assignment count;
 - recent job type/status/attempts/errors.
 
 Workspace managers can **Retry failed** or **Cancel queued** work. Retried jobs still pass delivery-time safety checks.
@@ -162,8 +188,11 @@ When enabled with a configured category:
 - READY/LIVE matches can receive a private text channel;
 - `@everyone` is denied view access;
 - the bot receives an explicit member overwrite so it can still manage/post there;
-- participants get view/send/read-history access;
-- team participation comes from the event's saved roster snapshot;
+- direct participants and saved team-roster members get view/send/read-history access;
+- the event's primary host gets access;
+- accepted, unexpired co-hosts with FULL, BRACKET, or SCOREKEEPER permission get access;
+- ANNOUNCEMENT_ONLY and VIEW_ONLY co-hosts do not receive private match-channel access;
+- access is resolved from the website when Four Seasons actually creates the channel, not only when the job was originally queued;
 - the topic stores `gnt-match:<match-id>`;
 - retries look for that marker and reuse an already-created channel;
 - `discord_match_channels` persists the mapping;
@@ -200,7 +229,9 @@ Each successful role ADD is recorded in `discord_role_assignments` with:
 
 Once per scheduler interval, Four Seasons calls the role-reconciliation endpoint. It examines ACTIVE bot-managed assignments and queues REMOVE jobs against the **historical role ID actually assigned**, not the workspace's current role setting.
 
-This means changing role A → role B can safely remove A while new ADD jobs target B. A role REMOVE remains valid even if role sync has already been disabled. Completed/cancelled role-job dedupe keys for the removed role are released so that same Discord role can be used again in a later event/config cycle.
+The reconciliation eligibility pass is batched into one correlated database read plus one batch queue insert instead of doing one or more database queries per tracked assignment.
+
+Changing role A → role B can safely remove A while new ADD jobs target B. A role REMOVE remains valid even if role sync has already been disabled. Completed/cancelled role-job dedupe keys for the removed role are released so that same Discord role can be used again in a later event/config cycle.
 
 Role operations use Discord's idempotent member-role PUT/DELETE endpoints and are revalidated before delivery.
 
@@ -245,12 +276,17 @@ A failed DM, announcement, channel, or role operation never rolls back the corre
 
 ## CI and release testing
 
-PR regression checks include:
+The v1.0 PR regression workflow now includes:
 
 ```text
+npm audit --omit=dev --audit-level=high
 node --check bot-worker/index.mjs
+npm run typecheck
+npm run build
 ```
 
-plus smoke tests, TypeScript typecheck, and production build.
+plus the existing competition/description smoke tests.
+
+The runtime dependency audit is clean after upgrading Next.js from 16.2.12 to **16.3.1**. The repo currently has no committed npm lockfile, so CI intentionally continues to use `npm install`; introducing a lockfile should be handled as a separate reproducibility change rather than silently generated during the v1.0 release.
 
 Use `docs/V100_TEST_PLAN.md` before moving draft PR #34 to ready-for-review status.
