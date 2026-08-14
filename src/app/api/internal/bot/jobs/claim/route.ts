@@ -11,6 +11,8 @@ type JobRow = RowDataPacket & {
   workspace_id: string | null;
   event_id: string | null;
   match_id: string | null;
+  role_kind: "COMPETITOR" | "CHAMPION" | null;
+  discord_role_id: string | null;
   discord_guild_id: string | null;
   target_discord_id: string | null;
   bot_connected: number;
@@ -37,6 +39,8 @@ type JobRow = RowDataPacket & {
   team_registered: number;
   champion_member: number;
   has_active_competition: number;
+  active_role_assignment: number;
+  completed_bracket: number;
 };
 
 type Payload = Record<string, unknown>;
@@ -92,7 +96,7 @@ function isJobAllowed(job: JobRow, payload: Payload): boolean {
     if (job.job_type === "ANNOUNCE_EVENT") return ["SIGNUPS_OPEN", "SIGNUPS_CLOSED", "CHECK_IN_OPEN", "LIVE"].includes(job.event_status ?? "");
     if (job.job_type === "ANNOUNCE_MATCH_READY") return job.event_status === "LIVE" && ["READY", "LIVE"].includes(job.match_status ?? "");
     if (job.job_type === "ANNOUNCE_RESULT") return ["COMPLETED", "FORFEIT"].includes(job.match_status ?? "");
-    if (job.job_type === "ANNOUNCE_WINNER") return job.event_status !== "CANCELLED";
+    if (job.job_type === "ANNOUNCE_WINNER") return Boolean(job.event_status !== "CANCELLED" && job.completed_bracket);
     return false;
   }
 
@@ -112,17 +116,18 @@ function isJobAllowed(job: JobRow, payload: Payload): boolean {
   }
 
   if (job.job_type === "SYNC_ROLE") {
-    if (!job.role_sync_enabled || !isSnowflake(job.target_discord_id)) return false;
-    const roleKind = payload.roleKind === "CHAMPION" ? "CHAMPION" : "COMPETITOR";
+    if (!isSnowflake(job.target_discord_id) || !job.role_kind || !isSnowflake(job.discord_role_id)) return false;
     const action = payload.action === "REMOVE" ? "REMOVE" : "ADD";
-    if (roleKind === "CHAMPION") {
-      return Boolean(isSnowflake(job.champion_role_id) && action === "ADD" && job.champion_member);
-    }
-    if (!isSnowflake(job.competitor_role_id)) return false;
-    if (action === "ADD") {
-      return Boolean(job.event_status && ACTIVE_EVENT_STATUSES.has(job.event_status) && (job.participant_status === "APPROVED" || job.team_registered));
-    }
-    return Boolean(["COMPLETED", "CANCELLED"].includes(job.event_status ?? "") && !job.has_active_competition);
+
+    // Removal targets a role that Game Night Tools actually recorded as assigned.
+    // It remains allowed after role sync is disabled or the configured role changes.
+    if (action === "REMOVE") return Boolean(job.active_role_assignment);
+
+    if (!job.role_sync_enabled) return false;
+    const configuredRoleId = job.role_kind === "CHAMPION" ? job.champion_role_id : job.competitor_role_id;
+    if (configuredRoleId !== job.discord_role_id) return false;
+    if (job.role_kind === "CHAMPION") return Boolean(job.champion_member);
+    return Boolean(job.event_status && ACTIVE_EVENT_STATUSES.has(job.event_status) && (job.participant_status === "APPROVED" || job.team_registered));
   }
 
   return false;
@@ -156,6 +161,7 @@ export async function POST(request: NextRequest) {
 
     const [rows] = await connection.query<JobRow[]>(
       `SELECT j.id, j.job_type, j.payload_json, j.attempts, j.workspace_id, j.event_id, j.match_id,
+              j.role_kind, j.discord_role_id,
               w.discord_guild_id, u.discord_id AS target_discord_id, COALESCE(w.bot_connected, 0) AS bot_connected,
               COALESCE(wbs.dm_reminders_enabled, 0) AS dm_reminders_enabled,
               COALESCE(wbs.announcements_enabled, 0) AS announcements_enabled,
@@ -208,7 +214,16 @@ export async function POST(request: NextRequest) {
                         AND JSON_SEARCH(aete.roster_json, 'one', CAST(j.user_id AS CHAR), NULL, '$[*].userId') IS NOT NULL
                     )
                   )
-              ) AS has_active_competition
+              ) AS has_active_competition,
+              EXISTS(
+                SELECT 1 FROM discord_role_assignments dra
+                WHERE dra.workspace_id = j.workspace_id AND dra.user_id = j.user_id
+                  AND dra.role_kind = j.role_kind AND dra.role_id = j.discord_role_id AND dra.status = 'ACTIVE'
+              ) AS active_role_assignment,
+              EXISTS(
+                SELECT 1 FROM brackets completed
+                WHERE completed.event_id = j.event_id AND completed.status = 'COMPLETED'
+              ) AS completed_bracket
        FROM discord_bot_jobs j
        LEFT JOIN workspaces w ON w.id = j.workspace_id
        LEFT JOIN users u ON u.id = j.user_id
@@ -269,6 +284,8 @@ export async function POST(request: NextRequest) {
       workspaceId: job.workspace_id,
       eventId: job.event_id,
       matchId: job.match_id,
+      roleKind: job.role_kind,
+      discordRoleId: job.discord_role_id,
       discordGuildId: job.discord_guild_id,
       targetDiscordId: job.target_discord_id,
       announcementChannelId: job.announcement_channel_id,
