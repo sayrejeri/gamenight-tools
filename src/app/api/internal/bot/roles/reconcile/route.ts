@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, checked: assignments.length, retained, queued: 0 });
   }
 
-  const values: unknown[] = [];
+  const values: Array<string | null> = [];
   const placeholders = removals.map((assignment) => {
     const version = new Date(assignment.updated_at).getTime();
     const dedupeKey = `tracked-role-remove:${assignment.workspace_id}:${assignment.user_id}:${version}:${assignment.role_kind}:${assignment.role_id}`.slice(0, 191);
