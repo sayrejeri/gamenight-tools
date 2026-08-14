@@ -81,6 +81,8 @@
 
 ## Next — v1.0 Platform Polish & Discord Bot Beta
 
+- Platform Owner/Admin team-profile administration from the Staff Dashboard, matching the existing server-profile administration flow
+- Discord-style profile badge system for platform roles, verified/official status, competitive achievements, and future earned badges
 - Optional Discord bot installation per workspace
 - Opt-in Discord DM reminders for signups, check-in, scheduled matches, and result confirmation
 - Signup, check-in, match-ready, match-result, and tournament-winner announcements
@@ -90,7 +92,7 @@
 - Clear failure handling when Discord privacy settings block DMs or the bot lacks permissions
 - Mobile and accessibility polish across tournament, profile, and leaderboard screens
 - Public competitive pages and spectator presentation polish
-- Final navigation, onboarding, settings, and permission cleanup for the 1.0 milestone
+- Final navigation, onboarding, settings, staff administration, and permission cleanup for the 1.0 milestone
 
 ## Later — Community history and event QOL
 
