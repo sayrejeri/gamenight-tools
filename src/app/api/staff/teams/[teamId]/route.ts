@@ -4,7 +4,7 @@ import { z } from "zod";
 import { readSession } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { query, withTransaction } from "@/lib/db";
-import { getPlatformRole } from "@/lib/platform-access";
+import { hasPlatformPermission } from "@/lib/permissions";
 
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -33,10 +33,8 @@ type TeamRow = RowDataPacket & {
 export async function PATCH(request: NextRequest, context: { params: Promise<{ teamId: string }> }) {
   const session = await readSession();
   if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-
-  const role = await getPlatformRole(session.userId);
-  if (role !== "OWNER" && role !== "ADMIN") {
-    return NextResponse.json({ error: "Platform Owner or Admin access is required." }, { status: 403 });
+  if (!await hasPlatformPermission(session.userId, "MANAGE_TEAMS")) {
+    return NextResponse.json({ error: "Manage Team Profiles permission is required." }, { status: 403 });
   }
 
   const { teamId } = await context.params;
