@@ -64,6 +64,7 @@ export async function enqueueDiscordBotJob(input: {
   workspaceId?: string | null;
   userId?: string | null;
   eventId?: string | null;
+  matchId?: string | null;
   type: BotJobType;
   dedupeKey?: string | null;
   payload?: unknown;
@@ -115,13 +116,14 @@ export async function enqueueDiscordBotJob(input: {
 
   const [result] = await target.execute(
     `INSERT IGNORE INTO discord_bot_jobs
-      (id, workspace_id, user_id, event_id, job_type, dedupe_key, payload_json, scheduled_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, workspace_id, user_id, event_id, match_id, job_type, dedupe_key, payload_json, scheduled_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       randomUUID(),
       input.workspaceId ?? null,
       input.userId ?? null,
       input.eventId ?? null,
+      input.matchId ?? null,
       input.type,
       input.dedupeKey?.slice(0, 191) ?? null,
       input.payload === undefined ? null : JSON.stringify(input.payload),
