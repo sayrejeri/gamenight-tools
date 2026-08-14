@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function DiscordBotSetupCard({ workspaceId, configured, connected, installUrl }: { workspaceId: string; configured: boolean; connected: boolean; installUrl: string | null }) {
+export function DiscordBotSetupCard({ workspaceId, configured, connected, installUrl, showSettingsLink = true }: { workspaceId: string; configured: boolean; connected: boolean; installUrl: string | null; showSettingsLink?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -32,10 +33,11 @@ export function DiscordBotSetupCard({ workspaceId, configured, connected, instal
       </div>
       {!configured ? <div className="rule-callout"><strong>Bot beta is not configured on this deployment.</strong><p>Platform setup needs DISCORD_BOT_TOKEN before servers can install and verify the bot.</p></div> : null}
       {configured && !connected && installUrl ? <p className="muted">Install the Game Night Tools bot into this server, approve the requested permissions, then return here and check the connection.</p> : null}
-      {connected ? <p className="muted">The bot can currently access this Discord server. Individual beta features will remain opt-in as they are added during v1.0.</p> : null}
+      {connected ? <p className="muted">The bot can currently access this Discord server. Individual beta features remain opt-in per server and per user.</p> : null}
       <div className="button-row">
         {configured && installUrl ? <a className="button" href={installUrl} target="_blank" rel="noreferrer">{connected ? "Re-authorize bot" : "Install Discord bot"}</a> : null}
         {configured ? <button className="button button-secondary" type="button" onClick={checkConnection} disabled={busy}>{busy ? "Checking…" : "Check connection"}</button> : null}
+        {showSettingsLink ? <Link className="button button-secondary" href={`/dashboard/workspaces/${workspaceId}/bot`}>Bot settings</Link> : null}
       </div>
       {message ? <p className="form-message" aria-live="polite">{message}</p> : null}
     </section>
