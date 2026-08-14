@@ -7,7 +7,6 @@ import { getPool, query } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit";
 import {
   canViewChannel,
-  ensureDefaultCommunityChannels,
   getCommunityScopeAccess,
   makeChannelSlug,
   type CommunityChannelType,
@@ -52,7 +51,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Community chat access is required." }, { status: 403 });
   }
 
-  await ensureDefaultCommunityChannels(scopeType, scopeId);
   const rows = await query<ChannelRow[]>(
     `SELECT c.id, c.name, c.slug, c.channel_type, c.topic, c.position, c.slowmode_seconds,
             (SELECT COUNT(*) FROM community_messages m
