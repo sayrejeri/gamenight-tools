@@ -3,11 +3,6 @@ name: Local release verification
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch or tag to build
-        required: true
-        default: main
-        type: string
       artifact_label:
         description: Optional artifact label override, e.g. v1.0.0-staging. Leave blank for final VERSION-based names.
         required: false
@@ -22,7 +17,7 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 60
     env:
-      TARGET_REF: ${{ inputs.ref }}
+      TARGET_REF: ${{ github.ref_name }}
       ARTIFACT_LABEL: ${{ inputs.artifact_label }}
     steps:
       - name: Type-check, build, and package selected ref
@@ -55,6 +50,9 @@ jobs:
           if ($artifactLabel -notmatch '^[A-Za-z0-9._-]+$') { throw "artifact_label contains unsupported characters." }
           $zipPath = Join-Path $releaseRoot "gamenight-tools-$artifactLabel-directadmin.zip"
           $workerZipPath = Join-Path $releaseRoot "gamenight-tools-bot-worker-$artifactLabel.zip"
+
+          if (Test-Path $zipPath) { throw "Release artifact already exists and will not be overwritten: $zipPath. Use a different artifact_label or move the existing file first." }
+          if ((Test-Path "bot-worker\index.mjs") -and (Test-Path $workerZipPath)) { throw "Worker artifact already exists and will not be overwritten: $workerZipPath. Use a different artifact_label or move the existing file first." }
 
           $deploymentGuide = "DEPLOYMENT-v$version.md"
           if ($artifactLabel -match '^v?(\d+\.\d+\.\d+)') {
@@ -110,7 +108,7 @@ jobs:
 
             $files = @(Get-ChildItem -LiteralPath $SourceRoot -File -Recurse -Force)
             if ($files.Count -lt $MinimumFiles) { throw "Package is unexpectedly small: $($files.Count) files in $SourceRoot." }
-            if (Test-Path $Destination) { Remove-Item $Destination -Force }
+            if (Test-Path $Destination) { throw "Refusing to overwrite existing release artifact: $Destination" }
 
             Add-Type -AssemblyName System.IO.Compression
             Add-Type -AssemblyName System.IO.Compression.FileSystem
