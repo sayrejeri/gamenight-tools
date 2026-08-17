@@ -13,7 +13,7 @@ import { getTournamentAccess } from "@/lib/tournament-access";
 import { dispatchWorkspaceWebhooks } from "@/lib/workspace-webhook-dispatch";
 
 const actionSchema = z.object({
-  action: z.enum(["READY", "START", "SCHEDULE", "REPORT", "CONFIRM", "DISPUTE", "OVERRIDE", "FORFEIT", "RESET"]),
+  action: z.enum(["READY", "START", "SCHEDULE", "REPORT", "STAFF_RESULT", "CONFIRM", "DISPUTE", "OVERRIDE", "FORFEIT", "RESET"]),
   matchId: z.string().uuid(),
   winnerEntryId: z.string().uuid().optional(),
   scoreA: z.number().int().min(0).max(999).nullable().optional(),
@@ -244,7 +244,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
   if (!access.event || !access.event.bracket_enabled) return NextResponse.json({ error: "Tournament event not found." }, { status: 404 });
 
   const action = parsed.data.action;
-  const managerOnly = ["SCHEDULE", "OVERRIDE", "FORFEIT", "RESET"].includes(action);
+  const managerOnly = ["SCHEDULE", "STAFF_RESULT", "OVERRIDE", "FORFEIT", "RESET"].includes(action);
   if (managerOnly && !access.manager) return NextResponse.json({ error: "Tournament manager permission is required." }, { status: 403 });
 
   try {
@@ -330,6 +330,22 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ e
         await connection.execute(`UPDATE bracket_matches SET status = 'AWAITING_CONFIRMATION', submitted_by = ?, submitted_at = CURRENT_TIMESTAMP(3), confirmation_due_at = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [session.userId, due, match.id]);
         const reporterSide = playerEntryId === match.participant_a_entry_id ? entryUsers.a : entryUsers.b;
         return audited({ action, label, participantUsers: participantUsers.filter((userId) => !reporterSide.has(userId)), message: `${label} has a result waiting for confirmation.`, webhook: false });
+      }
+
+      if (action === "STAFF_RESULT") {
+        if (!["PENDING", "READY", "LIVE"].includes(match.status)) throw new MatchConflict("This match already has a submitted or completed result. Confirm, override, or reopen it instead.");
+        const winnerEntryId = validateWinner(match, parsed.data.winnerEntryId);
+        validateScore(match, winnerEntryId, parsed.data.scoreA, parsed.data.scoreB);
+        const [existing] = await connection.query<(RowDataPacket & { id: string })[]>(`SELECT id FROM match_reports WHERE match_id = ? AND status IN ('PENDING', 'DISPUTED') LIMIT 1 FOR UPDATE`, [match.id]);
+        if (existing[0]) throw new MatchConflict("A participant result is already waiting for confirmation or dispute resolution. Confirm or override that report instead.");
+        const reportId = randomUUID();
+        await connection.execute(
+          `INSERT INTO match_reports (id, match_id, winner_entry_id, score_a, score_b, proof_url, notes, status, submitted_by, confirmed_by, confirmed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?, CURRENT_TIMESTAMP(3))`,
+          [reportId, match.id, winnerEntryId, parsed.data.scoreA ?? null, parsed.data.scoreB ?? null, parsed.data.proofUrl || null, parsed.data.notes || null, session.userId, session.userId],
+        );
+        await completeMatch({ connection, bracket, match, winnerEntryId, actorUserId: session.userId, reportId, finalStatus: "COMPLETED", scoreA: parsed.data.scoreA, scoreB: parsed.data.scoreB });
+        return audited({ action, label, participantUsers, message: `${label} result was recorded by tournament staff and the competition advanced.`, webhook: true });
       }
 
       if (action === "CONFIRM") {
