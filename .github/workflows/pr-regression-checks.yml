@@ -82,7 +82,9 @@ jobs:
         run: node tests/v100-bot-schema-smoke.cjs
 
       - name: Check Four Seasons worker syntax
-        run: node --check bot-worker/index.mjs
+        run: |
+          node --check bot-worker/index.js
+          node --check bot-worker/index.mjs
 
       - name: Typecheck
         run: npm run typecheck
