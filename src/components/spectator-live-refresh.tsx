@@ -30,6 +30,5 @@ export function SpectatorLiveRefresh({ active, intervalMs = 5000 }: Props) {
     };
   }, [active, intervalMs, router]);
 
-  if (!active) return null;
-  return <span className="badge" title="This spectator view refreshes live tournament data automatically.">Live updates · ~5s</span>;
+  return null;
 }
