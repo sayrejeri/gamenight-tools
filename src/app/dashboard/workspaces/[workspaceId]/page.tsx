@@ -4,9 +4,11 @@ import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { getWorkspaceRole } from "@/lib/access";
 import { query } from "@/lib/db";
+import { buildDiscordBotInstallUrl, isDiscordBotConfigured } from "@/lib/discord-bot";
 import { getWorkspacePermissionSnapshot } from "@/lib/permissions";
 import { getEffectivePermissions, parsePermissionOverrides, WORKSPACE_PERMISSIONS, WORKSPACE_ROLE_DEFAULTS, type WorkspacePermission } from "@/lib/permission-catalog";
 import { CreateEventForm } from "@/components/create-event-form";
+import { DiscordBotSetupCard } from "@/components/discord-bot-setup-card";
 import { GenerateCodeForm } from "@/components/generate-code-form";
 import { LocalDateTime } from "@/components/local-date-time";
 import { WorkspaceProfileForm } from "@/components/workspace-profile-form";
@@ -67,6 +69,8 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
   const canManageCodes = access.permissions.includes("MANAGE_CODES");
   const canSeeRestricted = canHostEvents || canManageEvents;
   const displayedRole = access.displayLabel ?? workspace.member_role ?? role ?? "DISCORD SERVER MEMBER";
+  const botConfigured = isDiscordBotConfigured();
+  const botInstallUrl = buildDiscordBotInstallUrl(workspace.discord_guild_id);
 
   const [events, games, templates, webhooks, members, ownerClaims] = await Promise.all([
     query<EventRow[]>(
@@ -120,7 +124,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
       <section className="workspace-hero workspace-hero-banner" style={workspace.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(9,11,18,.95), rgba(9,11,18,.58)), url(${workspace.banner_url})` } : undefined}>
         <div className="organization-hero-main">
           {workspace.icon_url ? <img className="organization-hero-logo" src={workspace.icon_url} alt="" /> : <span className="organization-hero-logo organization-logo-fallback">{workspace.name.slice(0, 2)}</span>}
-          <div><span className="eyebrow">{displayedRole}</span><h1>{workspace.name}</h1><p>{workspace.description ?? "This server has not added a description yet."}</p><div className="button-row">{workspace.main_game_category ? <span className="badge">Main game: {workspace.main_game_category}</span> : null}{workspace.verification_level ? <span className="badge">Verified: {workspace.verification_level.replaceAll("_", " ")}</span> : null}<span className="badge">Discord bot: optional</span><span className="badge">Discord webhooks: supported</span>{access.source ? <span className="badge">Access: {access.source.toLowerCase()}</span> : null}</div></div>
+          <div><span className="eyebrow">{displayedRole}</span><h1>{workspace.name}</h1><p>{workspace.description ?? "This server has not added a description yet."}</p><div className="button-row">{workspace.main_game_category ? <span className="badge">Main game: {workspace.main_game_category}</span> : null}{workspace.verification_level ? <span className="badge">Verified: {workspace.verification_level.replaceAll("_", " ")}</span> : null}<span className="badge">Discord bot: {workspace.bot_connected ? "connected" : "optional"}</span><span className="badge">Discord webhooks: supported</span>{access.source ? <span className="badge">Access: {access.source.toLowerCase()}</span> : null}</div></div>
         </div>
         <div className="button-row">{workspace.discord_invite_url ? <a className="button" href={workspace.discord_invite_url} target="_blank" rel="noreferrer">Join Discord</a> : null}{workspace.roblox_community_url ? <a className="button button-secondary" href={workspace.roblox_community_url} target="_blank" rel="noreferrer">{workspace.roblox_community_name ? `View ${workspace.roblox_community_name}` : "View Roblox community"}</a> : null}</div>
       </section>
@@ -132,6 +136,8 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
       {canHostEvents ? <section className="panel section-stack"><div className="section-header"><div><h2>Create an event</h2><p>Build a draft, preview it, then publish signups or submit it for approval.</p></div></div><CreateEventForm workspaceId={workspaceId} workspaceName={workspace.name} defaultTimezone={workspace.timezone} templates={templateOptions} workspaceGames={games} /></section> : null}
 
       {canEditProfile ? <section className="panel section-stack"><div className="section-header"><div><h2>Edit server profile</h2><p>Edit branding, links, games, and community settings according to your assigned permissions.</p></div></div><WorkspaceProfileForm workspaceId={workspaceId} initial={{ description: workspace.description ?? "", timezone: workspace.timezone, iconUrl: workspace.icon_url ?? "", bannerUrl: workspace.banner_url ?? "", discordInviteUrl: workspace.discord_invite_url ?? "", mainGameCategory: workspace.main_game_category ?? "", robloxCommunityName: workspace.roblox_community_name ?? "", robloxCommunityUrl: workspace.roblox_community_url ?? "", chatEnabled: Boolean(workspace.chat_enabled), suggestionsEnabled: Boolean(workspace.suggestions_enabled) }} savedGames={games} /></section> : null}
+
+      {canEditProfile ? <DiscordBotSetupCard workspaceId={workspaceId} configured={botConfigured} connected={Boolean(workspace.bot_connected)} installUrl={botInstallUrl} /> : null}
 
       {canManageMembers && role ? <section className="panel section-stack"><div className="section-header"><div><h2>Server access management</h2><p>Roles are labels and presets. Permissions below control what each person can actually do.</p></div><Link className="button button-secondary" href={`/dashboard/audit?workspace=${encodeURIComponent(workspaceId)}`}>Audit log</Link></div><WorkspaceMemberManager workspaceId={workspaceId} actorRole={role} members={members.map((member) => ({ userId: member.user_id, displayName: member.display_name, siteUsername: member.site_username, discordId: member.discord_id, discordUsername: member.discord_username, role: member.role, displayLabel: member.display_label, status: member.status, avatarUrl: member.avatar_url, expiresAt: member.expires_at ? new Date(member.expires_at).toISOString() : null, notes: member.notes, permissions: memberEffectivePermissions(member), lastChangedAt: member.last_changed_at ? new Date(member.last_changed_at).toISOString() : null, lastChangedBy: member.last_changed_by_name }))} ownerClaims={ownerClaims.map((claim) => ({ discordId: claim.discord_id, createdAt: new Date(claim.created_at).toISOString(), activeUserId: claim.active_user_id }))} /></section> : null}
 

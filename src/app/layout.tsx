@@ -20,6 +20,7 @@ import "./v070.css";
 import "./v080.css";
 import "./v090.css";
 import "./v094.css";
+import "./v100.css";
 
 export const metadata: Metadata = {
   title: { default: "Game Night Tools", template: "%s · Game Night Tools" },

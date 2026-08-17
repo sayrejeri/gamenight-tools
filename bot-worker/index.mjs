@@ -1,0 +1,312 @@
+const APP_URL = (process.env.GNT_APP_URL || "").replace(/\/$/, "");
+const WORKER_SECRET = process.env.BOT_WORKER_SECRET || "";
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || "";
+const WORKER_ID = (process.env.BOT_WORKER_ID || `four-seasons-${process.pid}`).slice(0, 120);
+const WORKER_VERSION = (process.env.BOT_WORKER_VERSION || "1.0.0-beta.1").slice(0, 40);
+const POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.BOT_POLL_SECONDS || 10) * 1000));
+const SCHEDULE_MS = Math.max(30000, Math.min(300000, Number(process.env.BOT_SCHEDULE_SECONDS || 60) * 1000));
+const CLAIM_LIMIT = Math.max(1, Math.min(10, Number(process.env.BOT_CLAIM_LIMIT || 1)));
+const WEBSITE_TIMEOUT_MS = 15000;
+const DISCORD_TIMEOUT_MS = 20000;
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+
+if (!APP_URL || !WORKER_SECRET || !DISCORD_BOT_TOKEN) {
+  console.error("Missing GNT_APP_URL, BOT_WORKER_SECRET, or DISCORD_BOT_TOKEN.");
+  process.exit(1);
+}
+
+let stopping = false;
+let lastScheduleAt = 0;
+let cachedBotUserId = "";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function websiteRequest(path, body) {
+  const response = await fetch(`${APP_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-gnt-bot-worker-secret": WORKER_SECRET,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(WEBSITE_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  let parsed = {};
+  try { parsed = text ? JSON.parse(text) : {}; }
+  catch { parsed = { error: text || `HTTP ${response.status}` }; }
+  if (!response.ok) throw new Error(parsed.error || `Game Night Tools returned HTTP ${response.status}.`);
+  return parsed;
+}
+
+async function discordRequest(path, options = {}, retried = false) {
+  const response = await fetch(`${DISCORD_API_BASE}${path}`, {
+    ...options,
+    signal: options.signal ?? AbortSignal.timeout(DISCORD_TIMEOUT_MS),
+    headers: {
+      Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  if (response.status === 429 && !retried) {
+    const body = await response.json().catch(() => ({}));
+    const retryAfterMs = Math.max(250, Math.min(15000, Number(body.retry_after || 1) * 1000));
+    await sleep(retryAfterMs);
+    return discordRequest(path, options, true);
+  }
+
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; }
+  catch { body = text || null; }
+
+  if (!response.ok) {
+    const error = new Error(`Discord HTTP ${response.status}${body?.message ? `: ${body.message}` : ""}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+async function getBotUserId() {
+  if (cachedBotUserId) return cachedBotUserId;
+  const me = await discordRequest("/users/@me", { method: "GET" });
+  if (!me?.id || !/^\d{15,25}$/.test(me.id)) throw new Error("Discord did not return a valid bot user ID.");
+  cachedBotUserId = me.id;
+  return cachedBotUserId;
+}
+
+function messageNonce(jobId) {
+  return String(jobId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 25) || undefined;
+}
+
+function normalizeMessagePayload(payload, nonce) {
+  const content = typeof payload?.content === "string" ? payload.content.slice(0, 1900) : undefined;
+  const embeds = Array.isArray(payload?.embeds) ? payload.embeds.slice(0, 10) : undefined;
+  if (!content && !embeds?.length) throw new Error("Bot job does not contain a message payload.");
+  return {
+    ...(content ? { content } : {}),
+    ...(embeds?.length ? { embeds } : {}),
+    allowed_mentions: { parse: [] },
+    ...(nonce ? { nonce, enforce_nonce: true } : {}),
+  };
+}
+
+function safeChannelName(value) {
+  const normalized = String(value || "match")
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  return (normalized || "match").slice(0, 90);
+}
+
+async function sendDirectMessage(job) {
+  if (!job.targetDiscordId) throw new Error("DM job has no Discord user ID.");
+  const dm = await discordRequest("/users/@me/channels", {
+    method: "POST",
+    body: JSON.stringify({ recipient_id: job.targetDiscordId }),
+  });
+  if (!dm?.id) throw new Error("Discord did not return a DM channel.");
+  await discordRequest(`/channels/${dm.id}/messages`, {
+    method: "POST",
+    body: JSON.stringify(normalizeMessagePayload(job.payload, messageNonce(job.id))),
+  });
+}
+
+async function sendAnnouncement(job) {
+  if (!job.announcementChannelId) throw new Error("Announcement job has no configured Discord channel ID.");
+  await discordRequest(`/channels/${job.announcementChannelId}/messages`, {
+    method: "POST",
+    body: JSON.stringify(normalizeMessagePayload(job.payload, messageNonce(job.id))),
+  });
+}
+
+async function createMatchChannel(job) {
+  if (!job.discordGuildId || !job.matchCategoryId) throw new Error("Match-channel job is missing its Discord guild or category ID.");
+  const matchId = typeof job.matchId === "string" && job.matchId ? job.matchId : typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
+  if (!matchId) throw new Error("Match-channel job has no valid match ID.");
+
+  // Resolve access at execution time so team roster snapshots and accepted event staff
+  // are current when the private Discord channel is actually created.
+  const access = await websiteRequest("/api/internal/bot/matches/access", { matchId });
+  const memberDiscordIds = Array.isArray(access.memberDiscordIds)
+    ? [...new Set(access.memberDiscordIds.filter((id) => typeof id === "string" && /^\d{15,25}$/.test(id)))]
+    : [];
+  if (!memberDiscordIds.length) throw new Error("Match-channel access resolution returned no eligible Discord members.");
+
+  const botUserId = await getBotUserId();
+  const marker = `gnt-match:${matchId}`;
+  const existingChannels = await discordRequest(`/guilds/${job.discordGuildId}/channels`, { method: "GET" });
+  const existing = Array.isArray(existingChannels)
+    ? existingChannels.find((channel) => channel?.type === 0 && channel?.topic === marker)
+    : null;
+  if (existing?.id) return { channelId: existing.id, matchId, reused: true };
+
+  const channel = await discordRequest(`/guilds/${job.discordGuildId}/channels`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: safeChannelName(job.payload?.channelName),
+      type: 0,
+      topic: marker,
+      parent_id: job.matchCategoryId,
+      permission_overwrites: [
+        { id: job.discordGuildId, type: 0, deny: "1024" },
+        { id: botUserId, type: 1, allow: "68624" },
+        ...memberDiscordIds.map((id) => ({ id, type: 1, allow: "68608" })),
+      ],
+    }),
+  });
+  if (!channel?.id) throw new Error("Discord created no channel ID for the match.");
+
+  if (typeof job.payload?.content === "string" && job.payload.content.trim()) {
+    await discordRequest(`/channels/${channel.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(normalizeMessagePayload({ content: job.payload.content }, messageNonce(job.id))),
+    });
+  }
+  return {
+    channelId: channel.id,
+    matchId,
+    reused: false,
+    participantCount: Array.isArray(access.participantDiscordIds) ? access.participantDiscordIds.length : 0,
+    staffCount: Array.isArray(access.staffDiscordIds) ? access.staffDiscordIds.length : 0,
+  };
+}
+
+async function deleteMatchChannel(job) {
+  const channelId = typeof job.payload?.channelId === "string" ? job.payload.channelId : "";
+  const matchId = typeof job.matchId === "string" && job.matchId ? job.matchId : typeof job.payload?.matchId === "string" ? job.payload.matchId : "";
+  if (!channelId || !matchId) throw new Error("Match-channel cleanup job is incomplete.");
+  try {
+    await discordRequest(`/channels/${channelId}`, { method: "DELETE" });
+  } catch (error) {
+    if (Number(error?.status || 0) !== 404) throw error;
+  }
+  return { channelId, matchId };
+}
+
+async function syncRole(job) {
+  if (!job.discordGuildId || !job.targetDiscordId) throw new Error("Role-sync job has no Discord guild/member ID.");
+  const roleKind = job.roleKind === "CHAMPION" ? "CHAMPION" : "COMPETITOR";
+  const roleId = typeof job.discordRoleId === "string" && /^\d{15,25}$/.test(job.discordRoleId) ? job.discordRoleId : "";
+  if (!roleId) throw new Error("Role-sync job has no valid persisted Discord role ID.");
+  const action = job.payload?.action === "REMOVE" ? "REMOVE" : "ADD";
+  await discordRequest(`/guilds/${job.discordGuildId}/members/${job.targetDiscordId}/roles/${roleId}`, {
+    method: action === "REMOVE" ? "DELETE" : "PUT",
+  });
+  return { roleKind, roleId, action };
+}
+
+async function executeJob(job) {
+  if (job.jobType.startsWith("DM_")) {
+    await sendDirectMessage(job);
+    return {};
+  }
+  if (job.jobType.startsWith("ANNOUNCE_")) {
+    await sendAnnouncement(job);
+    return {};
+  }
+  if (job.jobType === "CREATE_MATCH_CHANNEL") return createMatchChannel(job);
+  if (job.jobType === "DELETE_MATCH_CHANNEL") return deleteMatchChannel(job);
+  if (job.jobType === "SYNC_ROLE") return syncRole(job);
+  throw new Error(`Unsupported bot job type ${job.jobType}.`);
+}
+
+function retryableError(error) {
+  const status = Number(error?.status || 0);
+  if (status === 400 || status === 401 || status === 403 || status === 404) return false;
+  return true;
+}
+
+async function report(jobId, success, error = null, result = null) {
+  await websiteRequest("/api/internal/bot/jobs/report", {
+    jobId,
+    success,
+    retryable: error ? retryableError(error) : true,
+    error: error ? String(error.message || error).slice(0, 1000) : null,
+    result,
+  });
+}
+
+async function reportWithRetry(jobId, success, error = null, result = null) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await report(jobId, success, error, result);
+      return;
+    } catch (reportError) {
+      lastError = reportError;
+      if (attempt < 3) await sleep(attempt * 1000);
+    }
+  }
+  throw lastError || new Error("Bot job result could not be reported.");
+}
+
+async function runSchedulerIfDue() {
+  const now = Date.now();
+  if (now - lastScheduleAt < SCHEDULE_MS) return;
+  const [scheduleResult, roleResult] = await Promise.all([
+    websiteRequest("/api/internal/bot/schedule", { workerId: WORKER_ID }),
+    websiteRequest("/api/internal/bot/roles/reconcile", { workerId: WORKER_ID }),
+  ]);
+  lastScheduleAt = now;
+  const queued = Number(scheduleResult.queued || 0) + Number(roleResult.queued || 0);
+  if (queued) console.log(`[scheduler] queued ${queued} bot job(s) (${Number(roleResult.queued || 0)} role cleanup)`);
+}
+
+async function runOnce() {
+  await runSchedulerIfDue();
+  const claim = await websiteRequest("/api/internal/bot/jobs/claim", {
+    workerId: WORKER_ID,
+    workerVersion: WORKER_VERSION,
+    metadata: { node: process.version, platform: process.platform, arch: process.arch },
+    limit: CLAIM_LIMIT,
+  });
+  const jobs = Array.isArray(claim.jobs) ? claim.jobs : [];
+  for (const job of jobs) {
+    let result;
+    try {
+      result = await executeJob(job);
+    } catch (error) {
+      console.error(`[failed] ${job.jobType} ${job.id}:`, error?.message || error);
+      try {
+        await reportWithRetry(job.id, false, error);
+      } catch (reportError) {
+        console.error(`[report-failed] ${job.id}:`, reportError?.message || reportError);
+      }
+      continue;
+    }
+
+    try {
+      await reportWithRetry(job.id, true, null, result);
+      console.log(`[sent] ${job.jobType} ${job.id}`);
+    } catch (reportError) {
+      console.error(`[success-report-failed] ${job.jobType} ${job.id}:`, reportError?.message || reportError);
+    }
+  }
+  return jobs.length;
+}
+
+async function main() {
+  console.log(`Game Night Tools bot worker ${WORKER_VERSION} started as ${WORKER_ID}. Polling every ${POLL_MS / 1000}s; scheduler every ${SCHEDULE_MS / 1000}s; claim limit ${CLAIM_LIMIT}.`);
+  while (!stopping) {
+    try {
+      const count = await runOnce();
+      if (!count) await sleep(POLL_MS);
+    } catch (error) {
+      console.error("Worker poll failed:", error?.message || error);
+      await sleep(Math.min(POLL_MS * 2, 60000));
+    }
+  }
+  console.log("Game Night Tools bot worker stopped.");
+}
+
+process.on("SIGINT", () => { stopping = true; });
+process.on("SIGTERM", () => { stopping = true; });
+
+await main();

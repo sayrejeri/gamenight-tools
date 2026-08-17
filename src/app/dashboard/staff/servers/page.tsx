@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { getPlatformRole } from "@/lib/platform-access";
+import { hasPlatformPermission } from "@/lib/permissions";
 
 type ServerRow = RowDataPacket & {
   id: string;
@@ -22,8 +22,7 @@ type ServerRow = RowDataPacket & {
 
 export default async function StaffServersPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   const session = await requireSession();
-  const role = await getPlatformRole(session.userId);
-  if (role !== "OWNER" && role !== "ADMIN") notFound();
+  if (!await hasPlatformPermission(session.userId, "MANAGE_SERVERS")) notFound();
 
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
@@ -49,7 +48,7 @@ export default async function StaffServersPage({ searchParams }: { searchParams:
     <div className="section-stack">
       <section className="page-heading">
         <div><span className="eyebrow">Platform administration</span><h1>Server profiles</h1><p>Open any registered server profile to correct branding, links, games, webhooks, access roles, or owner Discord IDs.</p></div>
-        <Link className="button button-secondary" href="/dashboard/staff">Back to staff dashboard</Link>
+        <div className="button-row"><Link className="button button-secondary" href="/dashboard/staff">Back to staff dashboard</Link><Link className="button button-secondary" href="/dashboard/staff/teams">Team profiles</Link></div>
       </section>
 
       <form className="staff-user-search" method="get">
@@ -62,7 +61,7 @@ export default async function StaffServersPage({ searchParams }: { searchParams:
       </form>
 
       <section className="panel section-stack">
-        <div className="section-header"><div><h2>{q || status ? "Matching server profiles" : "All server profiles"}</h2><p>{servers.length} profiles shown. Platform owners and admins receive management access when opening one.</p></div></div>
+        <div className="section-header"><div><h2>{q || status ? "Matching server profiles" : "All server profiles"}</h2><p>{servers.length} profiles shown. Staff with Manage Server Profiles receive management access when opening one.</p></div></div>
         {servers.length ? (
           <div className="organization-grid">
             {servers.map((server) => (

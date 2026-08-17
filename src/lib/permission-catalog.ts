@@ -5,6 +5,7 @@ export const PLATFORM_PERMISSIONS = [
   "VIEW_BASIC_AUDIT",
   "VIEW_FULL_AUDIT",
   "MANAGE_SERVERS",
+  "MANAGE_TEAMS",
   "MANAGE_PLATFORM_STAFF",
   "ASSIGN_HIGH_ROLES",
   "EDIT_ACCESS_PERMISSIONS",
@@ -52,6 +53,7 @@ export const PLATFORM_PERMISSION_INFO: Record<PlatformPermission, { label: strin
   VIEW_BASIC_AUDIT: { label: "View basic audit", description: "See normal administrative and moderation actions." },
   VIEW_FULL_AUDIT: { label: "View full audit", description: "See sensitive security, ownership, and permission changes.", risk: "high" },
   MANAGE_SERVERS: { label: "Manage server profiles", description: "Edit approved server profiles and their normal settings." },
+  MANAGE_TEAMS: { label: "Manage team profiles", description: "Open and edit registered team profiles from platform staff administration without joining the roster." },
   MANAGE_PLATFORM_STAFF: { label: "Manage platform staff", description: "Add, edit, suspend, and remove normal platform staff roles." },
   ASSIGN_HIGH_ROLES: { label: "Assign Admin roles", description: "Grant or remove Admin-level access. This is owner-controlled by default.", risk: "high" },
   EDIT_ACCESS_PERMISSIONS: { label: "Edit permission overrides", description: "Customize another staff member's individual permissions.", risk: "high" },
@@ -85,7 +87,7 @@ export const WORKSPACE_PERMISSION_INFO: Record<WorkspacePermission, { label: str
 
 export const PLATFORM_ROLE_DEFAULTS: Record<string, readonly PlatformPermission[]> = {
   OWNER: PLATFORM_PERMISSIONS,
-  ADMIN: ["REVIEW_PROFILES", "MODERATE_USERS", "VIEW_REPORTS", "VIEW_BASIC_AUDIT", "MANAGE_SERVERS", "MANAGE_PLATFORM_STAFF"],
+  ADMIN: ["REVIEW_PROFILES", "MODERATE_USERS", "VIEW_REPORTS", "VIEW_BASIC_AUDIT", "MANAGE_SERVERS", "MANAGE_TEAMS", "MANAGE_PLATFORM_STAFF"],
   REVIEWER: ["REVIEW_PROFILES", "VIEW_BASIC_AUDIT"],
   MODERATOR: ["MODERATE_USERS", "VIEW_REPORTS", "VIEW_BASIC_AUDIT"],
   SUPPORT: ["VIEW_REPORTS"],

@@ -81,16 +81,18 @@
 
 ## Next — v1.0 Platform Polish & Discord Bot Beta
 
-- Optional Discord bot installation per workspace
-- Opt-in Discord DM reminders for signups, check-in, scheduled matches, and result confirmation
-- Signup, check-in, match-ready, match-result, and tournament-winner announcements
-- Slash commands for event status, upcoming matches, brackets, standings, and leaderboards
-- Optional temporary match channels with cleanup after completion
-- Optional role synchronization for hosts, competitors, champions, and event-specific roles
+- Platform staff team-profile administration from the Staff Dashboard using a dedicated Manage Team Profiles permission, matching server-profile administration
+- Discord-style profile badge system for platform roles, verified identities, organization ownership, competitive achievements, and future limited/earned badges
+- Optional Discord bot installation per workspace with dedicated bot settings and health/status UI
+- Four Seasons background worker with secure website job queue, worker heartbeats, retries, stale-lock recovery, and delivery failure tracking
+- Opt-in Discord DM reminders for signups/events, check-in, scheduled matches, and result confirmation
+- Workspace-controlled Discord announcements, temporary match channels, and role synchronization
+- Slash commands for server status, events, upcoming matches, brackets, and player/team leaderboards
+- Event, match-ready, match-result, and tournament-winner announcement hooks
 - Clear failure handling when Discord privacy settings block DMs or the bot lacks permissions
 - Mobile and accessibility polish across tournament, profile, and leaderboard screens
 - Public competitive pages and spectator presentation polish
-- Final navigation, onboarding, settings, and permission cleanup for the 1.0 milestone
+- Final navigation, onboarding, settings, staff administration, and permission cleanup for the 1.0 milestone
 
 ## Later — Community history and event QOL
 
