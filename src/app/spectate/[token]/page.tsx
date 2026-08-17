@@ -5,6 +5,9 @@ import type { RowDataPacket } from "mysql2";
 import { query } from "@/lib/db";
 import { BracketViewer } from "@/components/bracket-viewer";
 import { EventDescription } from "@/components/event-description";
+import { SpectatorLiveRefresh } from "@/components/spectator-live-refresh";
+
+export const dynamic = "force-dynamic";
 
 type PublicEventRow = RowDataPacket & {
   event_id: string;
@@ -116,6 +119,7 @@ export default async function SpectatorPage({ params }: { params: Promise<{ toke
 
   const gameName = event.subgame_name ?? event.game_name ?? event.platform_name ?? "Game Night";
   const publicReady = canShowCompetition(event);
+  const liveUpdates = event.event_status === "LIVE" && event.bracket_status === "LIVE";
 
   if (!publicReady) {
     const copy = unavailableCopy(event);
@@ -167,9 +171,13 @@ export default async function SpectatorPage({ params }: { params: Promise<{ toke
 
   return (
     <main className="public-spectator-shell">
+      <SpectatorLiveRefresh active={liveUpdates} />
       <header className="public-spectator-header">
         <Link className="brand-mark" href="/">Game Night Tools</Link>
-        <span className="badge">Public spectator view</span>
+        <div className="button-row">
+          <span className="badge">Public spectator view</span>
+          {liveUpdates ? <span className="badge">Live updates · ~5s</span> : null}
+        </div>
       </header>
       <div className="public-spectator-content section-stack">
         <section className="spectator-hero">
