@@ -86,6 +86,7 @@ jobs:
 
           if (Test-Path "bot-worker\index.mjs") {
             Write-Host "Checking Four Seasons worker syntax..."
+            if (Test-Path "bot-worker\index.js") { node --check "bot-worker\index.js" }
             node --check "bot-worker\index.mjs"
           }
 
@@ -172,11 +173,12 @@ jobs:
             $workerDeploy = Join-Path $work "bot-worker-deploy"
             if (Test-Path $workerDeploy) { Remove-Item $workerDeploy -Recurse -Force }
             New-Item -ItemType Directory -Force -Path $workerDeploy | Out-Null
+            if (Test-Path "bot-worker\index.js") { Copy-Item "bot-worker\index.js" $workerDeploy }
             Copy-Item "bot-worker\index.mjs" $workerDeploy
             Copy-Item "bot-worker\package.json" $workerDeploy
             if (Test-Path "bot-worker\.env.example") { Copy-Item "bot-worker\.env.example" $workerDeploy }
             if (Test-Path "docs\DISCORD_BOT_BETA.md") { Copy-Item "docs\DISCORD_BOT_BETA.md" $workerDeploy }
-            $workerResult = New-ReleaseZip -SourceRoot $workerDeploy -Destination $workerZipPath -RequiredEntries @("index.mjs", "package.json", ".env.example") -MinimumFiles 3 -MinimumBytes 1000
+            $workerResult = New-ReleaseZip -SourceRoot $workerDeploy -Destination $workerZipPath -RequiredEntries @("index.js", "index.mjs", "package.json", ".env.example") -MinimumFiles 4 -MinimumBytes 1000
           }
 
           Write-Host ""
