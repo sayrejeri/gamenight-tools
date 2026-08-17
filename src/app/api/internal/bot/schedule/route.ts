@@ -317,7 +317,6 @@ export async function POST(request: Request) {
   );
   for (const match of liveMatches) {
     const participantDiscordIds = await loadMatchDiscordIds(match);
-    if (!participantDiscordIds.length) continue;
     const entrants = [match.a_name, match.b_name, match.c_name].filter(Boolean).join(" vs ") || `Match ${match.match_number}`;
     const inserted = await enqueueDiscordBotJob({
       workspaceId: match.workspace_id,
